@@ -1,69 +1,68 @@
 #!/bin/bash
 
-# Script to deploy a multi-container application to Azure Container Instances (ACI)
-
 # Variables
-RESOURCE_GROUP="myACITestResourceGroup2"
+RESOURCE_GROUP="myACITestResourceGroup3"
 LOCATION="westus"
-ACR_NAME="myacitestcontainerregistry2"
-FRONTEND_IMAGE="docker-compose-project-frontend:latest"
-BACKEND_IMAGE="docker-compose-project-backend:latest"
+ACR_NAME="myacitestcontainerregistry3"
 ACR_LOGIN_SERVER="$ACR_NAME.azurecr.io"
-ENVIRONMENT_NAME="myACITestEnvironment2"  # Parameterized environment name
+ENVIRONMENT_NAME="myACITestEnvironment3"
+export AZURE_ENV_NAME="$ENVIRONMENT_NAME"
 
-# Step 1: Log in to Azure
+# Log in to Azure
 echo "Logging in to Azure..."
 az login
 
-# Step 2: Create a resource group
+# Create resource group
 echo "Creating resource group: $RESOURCE_GROUP..."
 az group create --name $RESOURCE_GROUP --location $LOCATION
 
-# Step 3: Create an Azure Container Registry (ACR)
+# Create ACR
 echo "Creating Azure Container Registry: $ACR_NAME..."
 az acr create --resource-group $RESOURCE_GROUP --name $ACR_NAME --sku Basic
 
-# Step 4: Log in to ACR
-echo "Logging in to ACR..."
-az acr login --name $ACR_NAME
+# Enable admin access to ACR (alternative to managed identity)
+echo "Enabling admin access to ACR..."
+az acr update --name $ACR_NAME --resource-group $RESOURCE_GROUP --admin-enabled true
 
-# Step 5: Tag and push Docker images to ACR
-echo "Tagging and pushing Docker images to ACR..."
-docker tag $FRONTEND_IMAGE $ACR_LOGIN_SERVER/frontend:latest
-docker tag $BACKEND_IMAGE $ACR_LOGIN_SERVER/backend:latest
+# Get ACR credentials
+echo "Getting ACR credentials..."
+ACR_USERNAME=$(az acr credential show --name $ACR_NAME --query username --output tsv)
+ACR_PASSWORD=$(az acr credential show --name $ACR_NAME --query "passwords[0].value" --output tsv)
 
-docker push $ACR_LOGIN_SERVER/frontend:latest
-docker push $ACR_LOGIN_SERVER/backend:latest
-
-# Step 6: Create Azure Container Apps Environment
+# Create Container Apps Environment
 echo "Creating Azure Container Apps Environment: $ENVIRONMENT_NAME..."
 az containerapp env create \
   --name $ENVIRONMENT_NAME \
   --resource-group $RESOURCE_GROUP \
   --location $LOCATION
 
-# Step 7: Deploy to Azure Container Instances (ACI)
-echo "Deploying to Azure Container Apps using environment: $ENVIRONMENT_NAME..."
+# # Create managed identity for the environment
+# echo "Adding managed identity to Container Apps Environment..."
+# az containerapp env update \
+#   --name $ENVIRONMENT_NAME \
+#   --resource-group $RESOURCE_GROUP \
+#   --enable-managed-identity
+
+# Deploy using docker-compose with ACR credentials and min scale set to 1
+echo "Deploying to Azure Container Apps..."
 az containerapp compose create \
   --resource-group $RESOURCE_GROUP \
   --environment $ENVIRONMENT_NAME \
-  --compose-file-path docker-compose.yml
+  --compose-file-path docker-compose.yml \
+  --registry-server $ACR_LOGIN_SERVER \
+  --registry-username $ACR_USERNAME \
+  --registry-password $ACR_PASSWORD
 
-# Step 8: Enable Dapr for frontend and backend container apps
-echo "Enabling Dapr for frontend and backend container apps..."
-az containerapp dapr enable \
-  --name frontend \
-  --resource-group $RESOURCE_GROUP \
-  --dapr-app-id frontend \
-  --dapr-app-port 8080
+    # Configure frontend
+  az containerapp update --name frontend --resource-group $RESOURCE_GROUP \
+    --min-replicas 1 --max-replicas 10
+  
+  # Configure backend
+  az containerapp ingress update --name backend --resource-group $RESOURCE_GROUP \
+    --type internal --target-port 5000
+  
+  # Configure redis
+  az containerapp ingress update --name redis --resource-group $RESOURCE_GROUP \
+    --type internal --target-port 6379 --transport tcp
 
-az containerapp dapr enable \
-  --name backend \
-  --resource-group $RESOURCE_GROUP \
-  --dapr-app-id backend \
-  --dapr-app-port 5000
-
-echo "Dapr is now enabled for service-to-service communication for both frontend and backend."
-
-# Step 9: Output success message
-echo "Deployment complete! Check Azure Portal for your application."
+echo "Deployment complete!"

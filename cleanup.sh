@@ -3,8 +3,8 @@
 # Script to clean up Azure resources created by the deployment
 
 # Variables
-RESOURCE_GROUP="myACITestResourceGroup"
-ACR_NAME="myacitestcontainerregistry"
+RESOURCE_GROUP="myACITestResourceGroup3"
+ACR_NAME="myacitestcontainerregistry3"
 
 # Step 1: Log in to Azure
 echo "Logging in to Azure..."

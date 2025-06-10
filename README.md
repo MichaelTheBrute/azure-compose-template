@@ -1,3 +1,6 @@
+# Objective
+The objective of this repository is to act as a playground for best practices when writing azure containerapp hosted multi-container applications with GitHub CI/CD. 
+
 # Docker Compose Project
 
 This project consists of a simple web application with a frontend that displays a "Hello World" message and a backend API that counts the number of requests made to it. The project is structured into two main components: the frontend and the backend, each running in its own Docker container.

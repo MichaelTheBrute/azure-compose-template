@@ -172,3 +172,38 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Build tracking files from push-azure-containers.sh
+**/.last_build
+
+# Docker related
+.docker/
+docker-*.log
+
+# Azure related
+.azure/
+azurite/
+__azurite_*
+azure-*.log
+.env.azure
+
+# Redis data files (if used locally)
+*.rdb
+*.aof
+dump.rdb
+
+# VS Code settings
+.vscode/
+*.code-workspace
+
+# Local configuration
+*local.settings.json
+local.*.json
+
+# Deployment scripts generated files
+deploy-output.json
+*.deployment
+
+# Temporary files
+.tmp/
+temp/

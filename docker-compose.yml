@@ -1,54 +1,25 @@
 version: '3.8'
 
 services:
+  redis:
+    image: "redis:latest"
+    ports:
+      - "6379"
+
   frontend:
     build:
       context: ./frontend
     ports:
       - "8080:8080"
     environment:
-      - BACKEND_URL=http://localhost:3500/v1.0/invoke/backend/method/
+      - AZURE_ENV_NAME=${AZURE_ENV_NAME}
     depends_on:
       - backend
-    networks:
-      - default
-
-  dapr-frontend:
-    image: "daprio/daprd:latest"
-    command: [
-      "./daprd",
-      "-app-id", "frontend",
-      "-app-port", "8080",
-      "-components-path", "/components"
-    ]
-    network_mode: "service:frontend"
-    depends_on:
-      - frontend
-    environment:
-      - DAPR_HTTP_PORT=3500
-    volumes:
-      - ./components:/components
 
   backend:
     build:
       context: ./backend
     ports:
-      - "5000:5000"
-    networks:
-      - default
-
-  dapr-backend:
-    image: "daprio/daprd:latest"
-    command: [
-      "./daprd",
-      "-app-id", "backend",
-      "-app-port", "5000",
-      "-components-path", "/components"
-    ]
-    network_mode: "service:backend"
-    depends_on:
-      - backend
+      - "5000"
     environment:
-      - DAPR_HTTP_PORT=3501
-    volumes:
-      - ./components:/components
+      - AZURE_ENV_NAME=${AZURE_ENV_NAME}

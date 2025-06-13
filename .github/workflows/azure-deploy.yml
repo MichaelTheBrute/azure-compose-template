@@ -1,0 +1,99 @@
+name: Azure Container Apps CI/CD
+
+on:
+  push:
+    branches: [ main, staging ]
+  pull_request:
+    branches: [ main, staging ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    # Use GitHub Environments feature
+    environment: ${{ github.ref_name }}
+    
+    # Define environment-specific variables
+    env:
+      # Common variables
+      LOCATION: westus
+      
+      # Environment-specific variables based on branch name
+      RESOURCE_GROUP: ${{ github.ref_name == 'main' && 'production-resource-group' || github.ref_name == 'staging' && 'staging-resource-group' || 'dev-resource-group' }}
+      ACR_NAME: ${{ github.ref_name == 'main' && 'production-acr' || github.ref_name == 'staging' && 'staging-acr' || 'dev-acr' }}
+      ENVIRONMENT_NAME: ${{ github.ref_name == 'main' && 'production-env' || github.ref_name == 'staging' && 'staging-env' || 'dev-env' }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      # Display deployment information
+      - name: Display deployment info
+        run: |
+          echo "Deploying to environment: ${{ github.ref_name }}"
+          echo "Resource Group: ${{ env.RESOURCE_GROUP }}"
+          echo "ACR: ${{ env.ACR_NAME }}"
+          echo "Container Apps Environment: ${{ env.ENVIRONMENT_NAME }}"
+      
+      - name: Log in to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      
+      # Build and push frontend
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/frontend:latest,${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
+      
+      # Build and push backend
+      - name: Build and push backend image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/backend:latest,${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
+      
+      # Deploy to Azure Container Apps
+      - name: Deploy to Azure Container Apps
+        run: |
+          # Deploy using docker-compose
+          az containerapp compose create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --environment ${{ env.ENVIRONMENT_NAME }} \
+            --compose-file-path docker-compose.yml \
+            --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+            --registry-username ${{ secrets.ACR_USERNAME }} \
+            --registry-password ${{ secrets.ACR_PASSWORD }}
+          
+          # Configure frontend
+          az containerapp update --name frontend --resource-group ${{ env.RESOURCE_GROUP }} \
+            --min-replicas 1 --max-replicas 10 \
+            --image ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }} \
+            --set-env-vars DEPLOY_TIMESTAMP=$(date +%s)
+          
+          # Configure backend
+          az containerapp update --name backend --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }} \
+            --set-env-vars DEPLOY_TIMESTAMP=$(date +%s)
+          
+          # Configure backend ingress (if needed)
+          az containerapp ingress update --name backend --resource-group ${{ env.RESOURCE_GROUP }} \
+            --type internal --target-port 5000
+          
+          # Configure redis ingress (if needed)
+          az containerapp ingress update --name redis --resource-group ${{ env.RESOURCE_GROUP }} \
+            --type internal --target-port 6379 --transport tcp

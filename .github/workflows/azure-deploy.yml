@@ -118,7 +118,7 @@ jobs:
             --compose-file-path docker-compose.yml \
             --registry-server ${{ env.ACR_NAME }}.azurecr.io \
             --registry-username ${{ steps.get-acr-creds.outputs.username }} \
-            --registry-password "${{ env.ACR_PASSWORD }}"
+            --registry-password "${{ steps.get-acr-creds.outputs.password }}"
           
           # Configure frontend
           az containerapp update --name frontend --resource-group ${{ env.RESOURCE_GROUP }} \

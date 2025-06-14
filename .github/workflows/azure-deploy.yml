@@ -82,16 +82,15 @@ jobs:
           ACR_USERNAME=$(az acr credential show --name ${{ env.ACR_NAME }} --query username --output tsv)
           ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" --output tsv)
           echo "username=$ACR_USERNAME" >> $GITHUB_OUTPUT
-          echo "password=$ACR_PASSWORD" >> $GITHUB_ENV
-          # We need to mask the password in logs
+          echo "password=$ACR_PASSWORD" >> $GITHUB_OUTPUT
           echo "::add-mask::$ACR_PASSWORD"
-      
+
       - name: Log in to Azure Container Registry
         uses: azure/docker-login@v1
         with:
           login-server: ${{ env.ACR_NAME }}.azurecr.io
           username: ${{ steps.get-acr-creds.outputs.username }}
-          password: ${{ env.ACR_PASSWORD }}
+          password: ${{ steps.get-acr-creds.outputs.password }}
       
       # Build and push frontend
       - name: Build and push frontend image

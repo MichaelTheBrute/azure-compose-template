@@ -21,7 +21,7 @@ jobs:
       
       # Environment-specific variables based on branch name
       RESOURCE_GROUP: ${{ github.ref_name == 'main' && 'production-resource-group' || github.ref_name == 'staging' && 'staging-resource-group' || 'dev-resource-group' }}
-      ACR_NAME: ${{ github.ref_name == 'main' && 'productionACR' || github.ref_name == 'staging' && 'stagingACR' || 'devACR' }}
+      ACR_NAME: ${{ github.ref_name == 'main' && 'acrstudiologicioprod' || github.ref_name == 'staging' && 'acrstudiologiciostaging' || 'acrstudiologiciodev' }}
       ENVIRONMENT_NAME: ${{ github.ref_name == 'main' && 'production-env' || github.ref_name == 'staging' && 'staging-env' || 'dev-env' }}
     
     steps:

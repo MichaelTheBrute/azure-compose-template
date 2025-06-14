@@ -44,12 +44,54 @@ jobs:
           echo "ACR: ${{ env.ACR_NAME }}"
           echo "Container Apps Environment: ${{ env.ENVIRONMENT_NAME }}"
       
+      # Setup infrastructure if it doesn't exist
+      - name: Create Resource Group if not exists
+        run: |
+          if ! az group show --name ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "Creating resource group ${{ env.RESOURCE_GROUP }}..."
+            az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }}
+          else
+            echo "Resource group ${{ env.RESOURCE_GROUP }} already exists."
+          fi
+
+      - name: Create ACR if not exists
+        run: |
+          if ! az acr show --name ${{ env.ACR_NAME }} &>/dev/null; then
+            echo "Creating container registry ${{ env.ACR_NAME }}..."
+            az acr create --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.ACR_NAME }} --sku Basic --admin-enabled true
+          else
+            echo "Container registry ${{ env.ACR_NAME }} already exists."
+          fi
+
+      - name: Create Container Apps Environment if not exists
+        run: |
+          if ! az containerapp env show --name ${{ env.ENVIRONMENT_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "Creating container apps environment ${{ env.ENVIRONMENT_NAME }}..."
+            az containerapp env create \
+              --name ${{ env.ENVIRONMENT_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --location ${{ env.LOCATION }}
+          else
+            echo "Container apps environment ${{ env.ENVIRONMENT_NAME }} already exists."
+          fi
+
+      # Get ACR credentials programmatically instead of using secrets
+      - name: Get ACR credentials
+        id: get-acr-creds
+        run: |
+          ACR_USERNAME=$(az acr credential show --name ${{ env.ACR_NAME }} --query username --output tsv)
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" --output tsv)
+          echo "username=$ACR_USERNAME" >> $GITHUB_OUTPUT
+          echo "password=$ACR_PASSWORD" >> $GITHUB_ENV
+          # We need to mask the password in logs
+          echo "::add-mask::$ACR_PASSWORD"
+      
       - name: Log in to Azure Container Registry
         uses: azure/docker-login@v1
         with:
           login-server: ${{ env.ACR_NAME }}.azurecr.io
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
+          username: ${{ steps.get-acr-creds.outputs.username }}
+          password: ${{ env.ACR_PASSWORD }}
       
       # Build and push frontend
       - name: Build and push frontend image
@@ -76,8 +118,8 @@ jobs:
             --environment ${{ env.ENVIRONMENT_NAME }} \
             --compose-file-path docker-compose.yml \
             --registry-server ${{ env.ACR_NAME }}.azurecr.io \
-            --registry-username ${{ secrets.ACR_USERNAME }} \
-            --registry-password ${{ secrets.ACR_PASSWORD }}
+            --registry-username ${{ steps.get-acr-creds.outputs.username }} \
+            --registry-password "${{ env.ACR_PASSWORD }}"
           
           # Configure frontend
           az containerapp update --name frontend --resource-group ${{ env.RESOURCE_GROUP }} \

@@ -1,16 +1,26 @@
 name: Azure Cleanup
 
 on:
-  workflow_dispatch: # Trigger manually
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to clean up"
+        required: true
+        default: "main"
+        type: choice
+        options:
+          - main
+          - staging
+          - dev
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     env:
       LOCATION: westus
-      RESOURCE_GROUP: ${{ github.ref_name == 'main' && 'production-resource-group' || github.ref_name == 'staging' && 'staging-resource-group' || 'dev-resource-group' }}
-      ACR_NAME: ${{ github.ref_name == 'main' && 'acrstudiologicioprod' || github.ref_name == 'staging' && 'acrstudiologiciostaging' || 'acrstudiologiciodev' }}
-      AZURE_ENV_NAME: ${{ github.ref_name == 'main' && 'production-env' || github.ref_name == 'staging' && 'staging-env' || 'dev-env' }}
+      RESOURCE_GROUP: ${{ inputs.environment == 'main' && 'production-resource-group' || inputs.environment == 'staging' && 'staging-resource-group' || 'dev-resource-group' }}
+      ACR_NAME: ${{ inputs.environment == 'main' && 'acrstudiologicioprod' || inputs.environment == 'staging' && 'acrstudiologiciostaging' || 'acrstudiologiciodev' }}
+      AZURE_ENV_NAME: ${{ inputs.environment == 'main' && 'production-env' || inputs.environment == 'staging' && 'staging-env' || 'dev-env' }}
 
     steps:
       - name: Log in to Azure

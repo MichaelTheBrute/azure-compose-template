@@ -22,7 +22,7 @@ jobs:
       # Environment-specific variables based on branch name
       RESOURCE_GROUP: ${{ github.ref_name == 'main' && 'production-resource-group' || github.ref_name == 'staging' && 'staging-resource-group' || 'dev-resource-group' }}
       ACR_NAME: ${{ github.ref_name == 'main' && 'acrstudiologicioprod' || github.ref_name == 'staging' && 'acrstudiologiciostaging' || 'acrstudiologiciodev' }}
-      ENVIRONMENT_NAME: ${{ github.ref_name == 'main' && 'production-env' || github.ref_name == 'staging' && 'staging-env' || 'dev-env' }}
+      AZURE_ENV_NAME: ${{ github.ref_name == 'main' && 'production-env' || github.ref_name == 'staging' && 'staging-env' || 'dev-env' }}
     
     steps:
       - name: Checkout repository
@@ -42,7 +42,7 @@ jobs:
           echo "Deploying to environment: ${{ github.ref_name }}"
           echo "Resource Group: ${{ env.RESOURCE_GROUP }}"
           echo "ACR: ${{ env.ACR_NAME }}"
-          echo "Container Apps Environment: ${{ env.ENVIRONMENT_NAME }}"
+          echo "Azure Environment Name: ${{ env.AZURE_ENV_NAME }}"
       
       # Setup infrastructure if it doesn't exist
       - name: Create Resource Group if not exists
@@ -65,14 +65,14 @@ jobs:
 
       - name: Create Container Apps Environment if not exists
         run: |
-          if ! az containerapp env show --name ${{ env.ENVIRONMENT_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &>/dev/null; then
-            echo "Creating container apps environment ${{ env.ENVIRONMENT_NAME }}..."
+          if ! az containerapp env show --name ${{ env.AZURE_ENV_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "Creating container apps environment ${{ env.AZURE_ENV_NAME }}..."
             az containerapp env create \
-              --name ${{ env.ENVIRONMENT_NAME }} \
+              --name ${{ env.AZURE_ENV_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --location ${{ env.LOCATION }}
           else
-            echo "Container apps environment ${{ env.ENVIRONMENT_NAME }} already exists."
+            echo "Container apps environment ${{ env.AZURE_ENV_NAME }} already exists."
           fi
 
       # Get ACR credentials programmatically instead of using secrets
@@ -114,7 +114,7 @@ jobs:
           # Deploy using docker-compose
           az containerapp compose create \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --environment ${{ env.ENVIRONMENT_NAME }} \
+            --environment ${{ env.AZURE_ENV_NAME }} \
             --compose-file-path docker-compose.yml \
             --registry-server ${{ env.ACR_NAME }}.azurecr.io \
             --registry-username ${{ steps.get-acr-creds.outputs.username }} \

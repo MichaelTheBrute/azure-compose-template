@@ -39,6 +39,8 @@ jobs:
 
       - name: Delete Resource Group
         run: |
-          RESOURCE_GROUP="${{ env.APP_NAME }}-${{ inputs.environment }}-resource-group"
+          APP_NAME_NOHYPHEN=$(echo "${{ env.APP_NAME }}" | tr -d '-')
+          ENV_NOHYPHEN=$(echo "${{ inputs.environment }}" | tr -d '-')
+          RESOURCE_GROUP="${APP_NAME_NOHYPHEN}-${ENV_NOHYPHEN}-resource-group"
           echo "Deleting Resource Group: $RESOURCE_GROUP"
           az group delete --name $RESOURCE_GROUP --yes --no-wait

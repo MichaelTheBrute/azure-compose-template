@@ -26,6 +26,15 @@ jobs:
           APP_NAME=$(yq '.metadata.app_name' docker-compose.yml)
           echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
 
+      - name: Validate App Name
+        run: |
+          APP_NAME="${{ steps.load-app-name.outputs.app_name }}"
+          if [[ ! "$APP_NAME" =~ ^[a-zA-Z0-9]+$ ]]; then
+            echo "Error: APP_NAME '$APP_NAME' contains non-alphanumeric characters. Only alphanumeric characters are allowed."
+            exit 1
+          fi
+          echo "APP_NAME '$APP_NAME' is valid."
+
       - name: Log in to Azure
         uses: azure/login@v1
         with:

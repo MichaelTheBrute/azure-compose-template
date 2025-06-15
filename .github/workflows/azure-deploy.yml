@@ -51,6 +51,27 @@ jobs:
           echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
           echo "azure_env_name=$AZURE_ENV_NAME" >> $GITHUB_OUTPUT
 
+      - name: Check ACR Name Availability
+        run: |
+          ACR_NAME="${{ steps.display-info.outputs.acr_name }}"
+          RESOURCE_GROUP="${{ steps.display-info.outputs.resource_group }}"
+          echo "Checking if ACR '$ACR_NAME' exists in resource group '$RESOURCE_GROUP'..."
+          
+          # Check if the ACR exists in the resource group
+          if az acr show --name $ACR_NAME --resource-group $RESOURCE_GROUP &>/dev/null; then
+            echo "ACR '$ACR_NAME' already exists in resource group '$RESOURCE_GROUP'."
+          else
+            echo "ACR '$ACR_NAME' does not exist in resource group '$RESOURCE_GROUP'. Checking global availability..."
+            
+            # Check if the ACR name is globally available
+            RESULT=$(az acr check-name --name $ACR_NAME --query "nameAvailable" --output tsv)
+            if [[ "$RESULT" != "true" ]]; then
+              echo "Error: ACR name '$ACR_NAME' is already in use globally and not owned by your subscription."
+              exit 1
+            fi
+            echo "ACR name '$ACR_NAME' is globally available."
+          fi
+
       - name: Create Resource Group if not exists
         run: |
           if ! az group show --name ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
@@ -113,6 +134,7 @@ jobs:
 
       - name: Deploy to Azure Container Apps
         run: |
+          export AZURE_ENV_NAME=${{ steps.display-info.outputs.azure_env_name }}
           az containerapp compose create \
             --resource-group ${{ steps.display-info.outputs.resource_group }} \
             --environment ${{ steps.display-info.outputs.azure_env_name }} \

@@ -44,9 +44,9 @@ jobs:
         id: display-info
         run: |
           REF_NAME_NOHYPHEN=$(echo "${{ github.ref_name }}" | tr -d '-')
-          RESOURCE_GROUP="${{ steps.load-app-name.outputs.app_name }}${REF_NAME_NOHYPHEN}ResourceGroup"
+          RESOURCE_GROUP="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME_NOHYPHEN}-rg"
           ACR_NAME="${{ steps.load-app-name.outputs.app_name }}${REF_NAME_NOHYPHEN}ACR"
-          AZURE_ENV_NAME="${{ steps.load-app-name.outputs.app_name }}${REF_NAME_NOHYPHEN}Env"
+          AZURE_ENV_NAME="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME_NOHYPHEN}-env"
           echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
           echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
           echo "azure_env_name=$AZURE_ENV_NAME" >> $GITHUB_OUTPUT

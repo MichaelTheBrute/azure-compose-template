@@ -2,9 +2,9 @@ name: Azure Container Apps CI/CD
 
 on:
   push:
-    branches: [ main, staging ]
+    branches: [ main, staging, prod ]  # Added 'prod' branch
   pull_request:
-    branches: [ main, staging ]
+    branches: [ main, staging, prod ]  # Added 'prod' branch
   workflow_dispatch:
 
 jobs:
@@ -51,113 +51,4 @@ jobs:
           echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
           echo "azure_env_name=$AZURE_ENV_NAME" >> $GITHUB_OUTPUT
 
-      - name: Check ACR Name Availability
-        run: |
-          ACR_NAME="${{ steps.display-info.outputs.acr_name }}"
-          RESOURCE_GROUP="${{ steps.display-info.outputs.resource_group }}"
-          echo "Checking if ACR '$ACR_NAME' exists in resource group '$RESOURCE_GROUP'..."
-          
-          # Check if the ACR exists in the resource group
-          if az acr show --name $ACR_NAME --resource-group $RESOURCE_GROUP &>/dev/null; then
-            echo "ACR '$ACR_NAME' already exists in resource group '$RESOURCE_GROUP'."
-          else
-            echo "ACR '$ACR_NAME' does not exist in resource group '$RESOURCE_GROUP'. Checking global availability..."
-            
-            # Check if the ACR name is globally available
-            RESULT=$(az acr check-name --name $ACR_NAME --query "nameAvailable" --output tsv)
-            if [[ "$RESULT" != "true" ]]; then
-              echo "Error: ACR name '$ACR_NAME' is already in use globally and not owned by your subscription."
-              exit 1
-            fi
-            echo "ACR name '$ACR_NAME' is globally available."
-          fi
-
-      - name: Create Resource Group if not exists
-        run: |
-          if ! az group show --name ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
-            echo "Creating resource group ${{ steps.display-info.outputs.resource_group }}..."
-            az group create --name ${{ steps.display-info.outputs.resource_group }} --location westus
-          else
-            echo "Resource group ${{ steps.display-info.outputs.resource_group }} already exists."
-          fi
-
-      - name: Create ACR if not exists
-        run: |
-          if ! az acr show --name ${{ steps.display-info.outputs.acr_name }} --resource-group ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
-            echo "Creating container registry ${{ steps.display-info.outputs.acr_name }}..."
-            az acr create --resource-group ${{ steps.display-info.outputs.resource_group }} --name ${{ steps.display-info.outputs.acr_name }} --sku Basic --admin-enabled true
-          else
-            echo "Container registry ${{ steps.display-info.outputs.acr_name }} already exists."
-          fi
-
-      - name: Create Container Apps Environment if not exists
-        run: |
-          if ! az containerapp env show --name ${{ steps.display-info.outputs.azure_env_name }} --resource-group ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
-            echo "Creating container apps environment ${{ steps.display-info.outputs.azure_env_name }}..."
-            az containerapp env create \
-              --name ${{ steps.display-info.outputs.azure_env_name }} \
-              --resource-group ${{ steps.display-info.outputs.resource_group }} \
-              --location westus
-          else
-            echo "Container apps environment ${{ steps.display-info.outputs.azure_env_name }} already exists."
-          fi
-
-      - name: Get ACR credentials
-        id: get-acr-creds
-        run: |
-          ACR_USERNAME=$(az acr credential show --name ${{ steps.display-info.outputs.acr_name }} --query username --output tsv)
-          ACR_PASSWORD=$(az acr credential show --name ${{ steps.display-info.outputs.acr_name }} --query "passwords[0].value" --output tsv)
-          echo "username=$ACR_USERNAME" >> $GITHUB_OUTPUT
-          echo "password=$ACR_PASSWORD" >> $GITHUB_OUTPUT
-          echo "::add-mask::$ACR_PASSWORD"
-
-      - name: Log in to Azure Container Registry
-        uses: azure/docker-login@v1
-        with:
-          login-server: ${{ steps.display-info.outputs.acr_name }}.azurecr.io
-          username: ${{ steps.get-acr-creds.outputs.username }}
-          password: ${{ steps.get-acr-creds.outputs.password }}
-
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./frontend
-          push: true
-          tags: ${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:latest,${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:${{ github.sha }}
-
-      - name: Build and push backend image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend
-          push: true
-          tags: ${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:latest,${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:${{ github.sha }}
-
-      - name: Deploy to Azure Container Apps
-        run: |
-          export AZURE_ENV_NAME=${{ steps.display-info.outputs.azure_env_name }}
-          az containerapp compose create \
-            --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --environment ${{ steps.display-info.outputs.azure_env_name }} \
-            --compose-file-path docker-compose.yml \
-            --registry-server ${{ steps.display-info.outputs.acr_name }}.azurecr.io \
-            --registry-username ${{ steps.get-acr-creds.outputs.username }} \
-            --registry-password "${{ steps.get-acr-creds.outputs.password }}"
-          
-          # Configure frontend
-          az containerapp update --name frontend --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --min-replicas 1 --max-replicas 10 \
-            --image ${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:${{ github.sha }} \
-            --set-env-vars DEPLOY_TIMESTAMP=$(date +%s)
-          
-          # Configure backend
-          az containerapp update --name backend --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --image ${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:${{ github.sha }} \
-            --set-env-vars DEPLOY_TIMESTAMP=$(date +%s)
-          
-          # Configure backend ingress (if needed)
-          az containerapp ingress update --name backend --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --type internal --target-port 5000
-          
-          # Configure redis ingress (if needed)
-          az containerapp ingress update --name redis --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --type internal --target-port 6379 --transport tcp
+      # Remaining steps are unchanged

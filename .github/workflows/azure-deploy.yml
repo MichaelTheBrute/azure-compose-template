@@ -23,14 +23,14 @@ jobs:
       - name: Load App Name from docker-compose.yml
         id: load-app-name
         run: |
-          APP_NAME=$(yq '.metadata.app_name' docker-compose.yml)
+          APP_NAME=$(yq '.metadata.app_name' docker-compose.yml | tr '[:upper:]' '[:lower:]') # Convert to lowercase
           echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
 
       - name: Validate App Name
         run: |
           APP_NAME="${{ steps.load-app-name.outputs.app_name }}"
-          if [[ ! "$APP_NAME" =~ ^[a-zA-Z0-9]+$ ]]; then
-            echo "Error: APP_NAME '$APP_NAME' contains non-alphanumeric characters. Only alphanumeric characters are allowed."
+          if [[ ! "$APP_NAME" =~ ^[a-z0-9]+$ ]]; then
+            echo "Error: APP_NAME '$APP_NAME' must be lowercase and contain only alphanumeric characters."
             exit 1
           fi
           echo "APP_NAME '$APP_NAME' is valid."
@@ -43,10 +43,10 @@ jobs:
       - name: Display deployment info
         id: display-info
         run: |
-          REF_NAME_NOHYPHEN=$(echo "${{ github.ref_name }}" | tr -d '-')
-          RESOURCE_GROUP="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME_NOHYPHEN}-rg"
-          ACR_NAME="${{ steps.load-app-name.outputs.app_name }}${REF_NAME_NOHYPHEN}ACR"
-          AZURE_ENV_NAME="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME_NOHYPHEN}-env"
+          REF_NAME=$(echo "${{ github.ref_name }}" | tr '[:upper:]' '[:lower:]' | tr -d '-') # Convert to lowercase and remove hyphens
+          RESOURCE_GROUP="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME}-rg"
+          ACR_NAME="${{ steps.load-app-name.outputs.app_name }}${REF_NAME}acr"
+          AZURE_ENV_NAME="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME}-env"
           echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
           echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
           echo "azure_env_name=$AZURE_ENV_NAME" >> $GITHUB_OUTPUT

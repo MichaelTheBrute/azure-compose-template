@@ -29,16 +29,32 @@ jobs:
       - name: Load App Name from docker-compose.yml
         id: load-app-name
         run: |
-          APP_NAME=$(yq '.metadata.app_name' docker-compose.yml)
-          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          APP_NAME=$(yq '.metadata.app_name' docker-compose.yml | tr '[:upper:]' '[:lower:]') # Convert to lowercase
+          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+
+      - name: Validate App Name
+        run: |
+          APP_NAME="${{ steps.load-app-name.outputs.app_name }}"
+          if [[ ! "$APP_NAME" =~ ^[a-z0-9]+$ ]]; then
+            echo "Error: APP_NAME '$APP_NAME' must be lowercase and contain only alphanumeric characters."
+            exit 1
+          fi
+          echo "APP_NAME '$APP_NAME' is valid."
 
       - name: Log in to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Generate Resource Group Name
+        id: generate-resource-group
+        run: |
+          REF_NAME=$(echo "${{ github.ref_name }}" | tr '[:upper:]' '[:lower:]' | tr -d '-') # Convert to lowercase and remove hyphens
+          RESOURCE_GROUP="${{ steps.load-app-name.outputs.app_name }}-${{ inputs.environment }}-rg"
+          echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+
       - name: Delete Resource Group
         run: |
-          RESOURCE_GROUP="${{ env.APP_NAME }}-${{ inputs.environment }}-resource-group"
+          RESOURCE_GROUP="${{ steps.generate-resource-group.outputs.resource_group }}"
           echo "Deleting Resource Group: $RESOURCE_GROUP"
           az group delete --name $RESOURCE_GROUP --yes --no-wait

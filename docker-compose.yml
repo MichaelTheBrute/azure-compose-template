@@ -1,5 +1,8 @@
 version: '3.8'
 
+metadata:
+  app_name: myapp
+
 services:
   redis:
     image: "redis:latest"

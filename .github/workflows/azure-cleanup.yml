@@ -16,29 +16,29 @@ on:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    env:
-      LOCATION: westus
-      RESOURCE_GROUP: ${{ inputs.environment == 'main' && 'production-resource-group' || inputs.environment == 'staging' && 'staging-resource-group' || 'dev-resource-group' }}
-      ACR_NAME: ${{ inputs.environment == 'main' && 'acrstudiologicioprod' || inputs.environment == 'staging' && 'acrstudiologiciostaging' || 'acrstudiologiciodev' }}
-      AZURE_ENV_NAME: ${{ inputs.environment == 'main' && 'production-env' || inputs.environment == 'staging' && 'staging-env' || 'dev-env' }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install yq
+        run: |
+          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+          sudo chmod +x /usr/bin/yq
+
+      - name: Load App Name from docker-compose.yml
+        id: load-app-name
+        run: |
+          APP_NAME=$(yq '.metadata.app_name' docker-compose.yml)
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+
       - name: Log in to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Delete Container Apps Environment
-        run: |
-          echo "Deleting Container Apps Environment: ${{ env.AZURE_ENV_NAME }}"
-          az containerapp env delete --name ${{ env.AZURE_ENV_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --yes
-
-      - name: Delete ACR
-        run: |
-          echo "Deleting Azure Container Registry: ${{ env.ACR_NAME }}"
-          az acr delete --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --yes
-
       - name: Delete Resource Group
         run: |
-          echo "Deleting Resource Group: ${{ env.RESOURCE_GROUP }}"
-          az group delete --name ${{ env.RESOURCE_GROUP }} --yes --no-wait
+          RESOURCE_GROUP="${{ env.APP_NAME }}-${{ inputs.environment }}-resource-group"
+          echo "Deleting Resource Group: $RESOURCE_GROUP"
+          az group delete --name $RESOURCE_GROUP --yes --no-wait

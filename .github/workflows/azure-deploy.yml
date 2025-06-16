@@ -151,7 +151,7 @@ jobs:
 
             # Extract custom labels using yq, fallback to defaults if not set
             MIN_REPLICAS=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.min-replicas=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
-            INGRESS_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
+            INGRESS_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.type=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
 
             # Default values if labels are not set
             MIN_REPLICAS=${MIN_REPLICAS:0}

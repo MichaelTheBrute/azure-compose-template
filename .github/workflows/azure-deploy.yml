@@ -135,6 +135,8 @@ jobs:
       - name: Deploy to Azure Container Apps
         run: |
           export AZURE_ENV_NAME=${{ steps.display-info.outputs.azure_env_name }}
+
+          # Deploy using docker-compose.yml
           az containerapp compose create \
             --resource-group ${{ steps.display-info.outputs.resource_group }} \
             --environment ${{ steps.display-info.outputs.azure_env_name }} \
@@ -142,27 +144,31 @@ jobs:
             --registry-server ${{ steps.display-info.outputs.acr_name }}.azurecr.io \
             --registry-username ${{ steps.get-acr-creds.outputs.username }} \
             --registry-password "${{ steps.get-acr-creds.outputs.password }}"
-          
-          # Configure frontend
-          az containerapp update --name frontend --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --min-replicas 1 --max-replicas 10 \
-            --image ${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:${{ github.sha }} \
-            --set-env-vars DEPLOY_TIMESTAMP=$(date +%s)
-          
-          # Configure backend
-          az containerapp update --name backend --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --min-replicas 1 --max-replicas 10 \
-            --image ${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:${{ github.sha }} \
-            --set-env-vars DEPLOY_TIMESTAMP=$(date +%s)
 
-          # Configure redis replicas
-          az containerapp update --name redis --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --min-replicas 1 --max-replicas 10
+          # Loop through services in docker-compose.yml and configure replicas and ingress
+          for SERVICE in $(yq '.services | keys | .[]' docker-compose.yml); do
+            echo "Processing service: $SERVICE"
 
-            # Configure backend ingress (if needed)
-          az containerapp ingress update --name backend --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --type internal --target-port 5000
-          
-          # Configure redis ingress (if needed)
-          az containerapp ingress update --name redis --resource-group ${{ steps.display-info.outputs.resource_group }} \
-            --type internal --target-port 6379 --transport tcp
+            # Extract custom labels
+            MIN_REPLICAS=$(yq ".services[\"$SERVICE\"].labels[] | select(. == \"studiologic.io.min-replicas=\") | split(\"=\")[1]" docker-compose.yml)
+            INGRESS_TYPE=$(yq ".services[\"$SERVICE\"].labels[] | select(. == \"studiologic.io.ingress.internal=\") | split(\"=\")[1]" docker-compose.yml)
+
+            # Default values if labels are not set
+            MIN_REPLICAS=${MIN_REPLICAS:-1}
+            INGRESS_TYPE=${INGRESS_TYPE:-external}
+
+            # Update replicas
+            echo "Configuring replicas for $SERVICE: min=$MIN_REPLICAS"
+            az containerapp update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
+              --min-replicas $MIN_REPLICAS
+
+            # Update ingress type
+            echo "Configuring ingress for $SERVICE: type=$INGRESS_TYPE"
+            if [[ "$INGRESS_TYPE" == "internal" ]]; then
+              az containerapp ingress update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
+                --type internal
+            else
+              az containerapp ingress update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
+                --type external
+            fi
+          done

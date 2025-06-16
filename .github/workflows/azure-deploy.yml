@@ -2,9 +2,9 @@ name: Azure Container Apps CI/CD
 
 on:
   push:
-    branches: [ main, staging ]
+    branches: [ main, staging, prod ]
   pull_request:
-    branches: [ main, staging ]
+    branches: [ main, staging, prod ]
   workflow_dispatch:
 
 jobs:

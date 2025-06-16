@@ -10,7 +10,7 @@ services:
       - "6379"
     labels:
       - "studiologic.io.min-replicas=1"
-      - "studiologic.io.ingress.type=internal"
+      - "studiologic.io.ingress.type=external"
 
   frontend:
     build:

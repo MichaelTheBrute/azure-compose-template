@@ -149,12 +149,12 @@ jobs:
           for SERVICE in $(yq '.services | keys | .[]' docker-compose.yml); do
             echo "Processing service: $SERVICE"
 
-            # Extract custom labels
-            MIN_REPLICAS=$(yq ".services[\"$SERVICE\"].labels[] | select(. == \"studiologic.io.min-replicas=\") | split(\"=\")[1]" docker-compose.yml)
-            INGRESS_TYPE=$(yq ".services[\"$SERVICE\"].labels[] | select(. == \"studiologic.io.ingress.internal=\") | split(\"=\")[1]" docker-compose.yml)
+            # Extract custom labels using yq, fallback to defaults if not set
+            MIN_REPLICAS=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.min-replicas=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
+            INGRESS_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
 
             # Default values if labels are not set
-            MIN_REPLICAS=${MIN_REPLICAS:-1}
+            MIN_REPLICAS=${MIN_REPLICAS:0}
             INGRESS_TYPE=${INGRESS_TYPE:-external}
 
             # Update replicas
@@ -162,13 +162,8 @@ jobs:
             az containerapp update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
               --min-replicas $MIN_REPLICAS
 
-            # Update ingress type
+            # Update ingress type directly using INGRESS_TYPE value
             echo "Configuring ingress for $SERVICE: type=$INGRESS_TYPE"
-            if [[ "$INGRESS_TYPE" == "internal" ]]; then
-              az containerapp ingress update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
-                --type internal
-            else
-              az containerapp ingress update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
-                --type external
-            fi
+            az containerapp ingress update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
+              --type $INGRESS_TYPE
           done

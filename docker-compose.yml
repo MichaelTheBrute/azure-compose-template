@@ -10,7 +10,7 @@ services:
       - "6379"
     labels:
       - "studiologic.io.min-replicas=1"
-      - "studiologic.io.ingress.internal=true"
+      - "studiologic.io.ingress.type=internal"
 
   frontend:
     build:
@@ -33,4 +33,4 @@ services:
       - AZURE_ENV_NAME=${AZURE_ENV_NAME}
     labels:
       - "studiologic.io.min-replicas=1"
-      - "studiologic.io.ingress.internal=true"
+      - "studiologic.io.ingress.type=internal"

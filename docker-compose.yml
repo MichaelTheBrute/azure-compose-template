@@ -7,10 +7,11 @@ services:
   redis:
     image: "redis:latest"
     ports:
-      - "6379"
+      - "6379:6379"
     labels:
       - "studiologic.io.min-replicas=1"
-      - "studiologic.io.ingress.type=external"
+      - "studiologic.io.ingress.type=internal"
+      - "studiologic.io.ingress.transport=tcp"
 
   frontend:
     build:
@@ -28,7 +29,7 @@ services:
     build:
       context: ./backend
     ports:
-      - "5000"
+      - "5000:5000"
     environment:
       - AZURE_ENV_NAME=${AZURE_ENV_NAME}
     labels:

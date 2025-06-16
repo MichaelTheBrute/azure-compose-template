@@ -152,10 +152,12 @@ jobs:
             # Extract custom labels using yq, fallback to defaults if not set
             MIN_REPLICAS=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.min-replicas=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
             INGRESS_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.type=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
+            INGRESS_TRANSPORT=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.transport=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
 
             # Default values if labels are not set
             MIN_REPLICAS=${MIN_REPLICAS:0}
             INGRESS_TYPE=${INGRESS_TYPE:-external}
+            INGRESS_TRANSPORT=${INGRESS_TRANSPORT:-http}
 
             # Update replicas
             echo "Configuring replicas for $SERVICE: min=$MIN_REPLICAS"
@@ -165,5 +167,5 @@ jobs:
             # Update ingress type directly using INGRESS_TYPE value
             echo "Configuring ingress for $SERVICE: type=$INGRESS_TYPE"
             az containerapp ingress update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
-              --type $INGRESS_TYPE
+              --type $INGRESS_TYPE --transport $INGRESS_TRANSPORT 
           done

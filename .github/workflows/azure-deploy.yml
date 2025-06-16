@@ -151,10 +151,15 @@ jobs:
           
           # Configure backend
           az containerapp update --name backend --resource-group ${{ steps.display-info.outputs.resource_group }} \
+            --min-replicas 1 --max-replicas 10 \
             --image ${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:${{ github.sha }} \
             --set-env-vars DEPLOY_TIMESTAMP=$(date +%s)
-          
-          # Configure backend ingress (if needed)
+
+          # Configure redis replicas
+          az containerapp update --name redis --resource-group ${{ steps.display-info.outputs.resource_group }} \
+            --min-replicas 1 --max-replicas 10
+
+            # Configure backend ingress (if needed)
           az containerapp ingress update --name backend --resource-group ${{ steps.display-info.outputs.resource_group }} \
             --type internal --target-port 5000
           

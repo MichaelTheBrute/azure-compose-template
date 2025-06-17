@@ -116,20 +116,53 @@ jobs:
           username: ${{ steps.get-acr-creds.outputs.username }}
           password: ${{ steps.get-acr-creds.outputs.password }}
 
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./frontend
-          push: true
-          tags: ${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:latest,${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:${{ github.sha }}
+      # - name: Build and push frontend image
+      #   uses: docker/build-push-action@v4
+      #   with:
+      #     context: ./frontend
+      #     push: true
+      #     tags: ${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:latest,${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:${{ github.sha }}
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend
-          push: true
-          tags: ${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:latest,${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:${{ github.sha }}
-
+      # - name: Build and push backend image
+      #   uses: docker/build-push-action@v4
+      #   with:
+      #     context: ./backend
+      #     push: true
+      #     tags: ${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:latest,${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:${{ github.sha }}
+    
+      - name: Create Storage Account and File Share for Database
+        run: |
+          # Generate storage account name (must be globally unique, lowercase, no special chars)
+          STORAGE_ACCOUNT="${{ steps.load-app-name.outputs.app_name }}${REF_NAME}store"
+          STORAGE_ACCOUNT=$(echo $STORAGE_ACCOUNT | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | head -c 24)
+          
+          # Create storage account if it doesn't exist
+          if ! az storage account show --name $STORAGE_ACCOUNT --resource-group ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
+            echo "Creating storage account: $STORAGE_ACCOUNT"
+            az storage account create \
+              --name $STORAGE_ACCOUNT \
+              --resource-group ${{ steps.display-info.outputs.resource_group }} \
+              --location westus \
+              --sku Standard_LRS \
+              --kind StorageV2
+          fi
+          
+          # Get storage key
+          STORAGE_KEY=$(az storage account keys list --account-name $STORAGE_ACCOUNT --query "[0].value" -o tsv)
+          echo "::add-mask::$STORAGE_KEY"
+          
+          # Create file share for database
+          SHARE_NAME="postgres-data"
+          if ! az storage share exists --name $SHARE_NAME --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY --query exists -o tsv | grep -q "true"; then
+            echo "Creating file share: $SHARE_NAME"
+            az storage share create --name $SHARE_NAME --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY
+          fi
+          
+          # Save storage info for later use
+          echo "storage_account=$STORAGE_ACCOUNT" >> $GITHUB_OUTPUT
+          echo "storage_key=$STORAGE_KEY" >> $GITHUB_ENV
+          echo "share_name=$SHARE_NAME" >> $GITHUB_OUTPUT
+    
       - name: Deploy to Azure Container Apps
         run: |
           export AZURE_ENV_NAME=${{ steps.display-info.outputs.azure_env_name }}
@@ -167,3 +200,4 @@ jobs:
             az containerapp ingress update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
               --type $INGRESS_TYPE --transport $INGRESS_TRANSPORT 
           done
+

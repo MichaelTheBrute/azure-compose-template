@@ -116,24 +116,11 @@ jobs:
           username: ${{ steps.get-acr-creds.outputs.username }}
           password: ${{ steps.get-acr-creds.outputs.password }}
 
-      # - name: Build and push frontend image
-      #   uses: docker/build-push-action@v4
-      #   with:
-      #     context: ./frontend
-      #     push: true
-      #     tags: ${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:latest,${{ steps.display-info.outputs.acr_name }}.azurecr.io/frontend:${{ github.sha }}
-
-      # - name: Build and push backend image
-      #   uses: docker/build-push-action@v4
-      #   with:
-      #     context: ./backend
-      #     push: true
-      #     tags: ${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:latest,${{ steps.display-info.outputs.acr_name }}.azurecr.io/backend:${{ github.sha }}
-    
       - name: Create Storage Account and File Share for Database
         run: |
           # Generate storage account name (must be globally unique, lowercase, no special chars)
-          STORAGE_ACCOUNT="${{ steps.load-app-name.outputs.app_name }}${REF_NAME}store"
+          REF_NAME=$(echo "${{ github.ref_name }}" | tr '[:upper:]' '[:lower:]' | tr -d '-') # Convert to lowercase and remove hyphens
+          STORAGE_ACCOUNT="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME}-store"
           STORAGE_ACCOUNT=$(echo $STORAGE_ACCOUNT | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | head -c 24)
           
           # Create storage account if it doesn't exist

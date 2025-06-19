@@ -120,7 +120,7 @@ jobs:
         run: |
           # Generate storage account name (must be globally unique, lowercase, no special chars)
           REF_NAME=$(echo "${{ github.ref_name }}" | tr '[:upper:]' '[:lower:]' | tr -d '-') # Convert to lowercase and remove hyphens
-          STORAGE_ACCOUNT="${REF_NAME}-${{ steps.load-app-name.outputs.app_name }}"
+          STORAGE_ACCOUNT="${REF_NAME}${{ steps.load-app-name.outputs.app_name }}"
           STORAGE_ACCOUNT=$(echo $STORAGE_ACCOUNT | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | head -c 24)
           
           # Create storage account if it doesn't exist
@@ -172,6 +172,11 @@ jobs:
             INGRESS_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.type=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
             INGRESS_TRANSPORT=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.transport=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
 
+            # Extract storage-related labels
+            STORAGE_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.storage.type=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
+            STORAGE_MOUNT_PATH=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.storage.mount-path=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
+            STORAGE_SHARE_NAME=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.storage.share-name=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
+
             # Default values if labels are not set
             MIN_REPLICAS=${MIN_REPLICAS:0}
             INGRESS_TYPE=${INGRESS_TYPE:-external}
@@ -186,6 +191,28 @@ jobs:
             echo "Configuring ingress for $SERVICE: type=$INGRESS_TYPE"
             az containerapp ingress update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} \
               --type $INGRESS_TYPE --transport $INGRESS_TRANSPORT 
+
+            # Add volume configuration if needed
+            if [[ "$STORAGE_TYPE" == "AzureFile" && -n "$STORAGE_MOUNT_PATH" ]]; then
+              echo "Configuring Azure File storage mount for $SERVICE"
+              
+              # Use the specified share name or default to service name
+              SHARE_NAME=${STORAGE_SHARE_NAME:-"$SERVICE-data"}
+              
+              # Check if share exists, create if needed
+              if ! az storage share exists --name $SHARE_NAME --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY --query exists -o tsv | grep -q "true"; then
+                echo "Creating file share: $SHARE_NAME"
+                az storage share create --name $SHARE_NAME --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY
+              fi
+              
+              # Add volume configuration to common config
+              VOLUME_CONFIG="--volumes ${SERVICE}-volume=Azure.StorageAccount:$STORAGE_ACCOUNT/$SHARE_NAME:$STORAGE_KEY --volume-mounts ${SERVICE}-volume=$STORAGE_MOUNT_PATH"
+              COMMON_CONFIG="$COMMON_CONFIG $VOLUME_CONFIG"
+            fi
+
+            # Apply configuration to the service
+            echo "Updating container app: $SERVICE with configuration"
+            az containerapp update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} $COMMON_CONFIG
           done
 
       - name: Check if Resource Group is being deleted

@@ -4,6 +4,24 @@ metadata:
   app_name: studiologicapptemplate
 
 services:
+  postgres:
+    image: "postgres:14"
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=dbuser
+      - POSTGRES_PASSWORD=dbpassword
+      - POSTGRES_DB=myapp
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    labels:
+      - "studiologic.io.min-replicas=1"
+      - "studiologic.io.ingress.type=internal"
+      - "studiologic.io.ingress.transport=tcp"
+      - "studiologic.io.storage.type=AzureFile"
+      - "studiologic.io.storage.mount-path=/var/lib/postgresql/data"
+      - "studiologic.io.storage.share-name=postgres-data"
+
   redis:
     image: "redis:latest"
     ports:
@@ -32,6 +50,12 @@ services:
       - "5000:5000"
     environment:
       - AZURE_ENV_NAME=${AZURE_ENV_NAME}
+      - DATABASE_URL=postgresql://dbuser:dbpassword@postgres:5432/myapp
+    depends_on:
+      - postgres
     labels:
       - "studiologic.io.min-replicas=1"
       - "studiologic.io.ingress.type=internal"
+
+volumes:
+  postgres-data:

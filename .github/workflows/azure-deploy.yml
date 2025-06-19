@@ -117,6 +117,7 @@ jobs:
           password: ${{ steps.get-acr-creds.outputs.password }}
 
       - name: Create Storage Account and File Share for Database
+        id: storage-setup
         run: |
           # Generate storage account name (must be globally unique, lowercase, no special chars)
           REF_NAME=$(echo "${{ github.ref_name }}" | tr '[:upper:]' '[:lower:]' | tr -d '-') # Convert to lowercase and remove hyphens
@@ -200,13 +201,13 @@ jobs:
               SHARE_NAME=${STORAGE_SHARE_NAME:-"$SERVICE-data"}
               
               # Check if share exists, create if needed
-              if ! az storage share exists --name $SHARE_NAME --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY --query exists -o tsv | grep -q "true"; then
+              if ! az storage share exists --name $SHARE_NAME --account-name ${{ steps.storage-setup.outputs.storage_account }} --account-key ${{ env.storage_key }} --query exists -o tsv | grep -q "true"; then
                 echo "Creating file share: $SHARE_NAME"
-                az storage share create --name $SHARE_NAME --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY
+                az storage share create --name $SHARE_NAME --account-name ${{ steps.storage-setup.outputs.storage_account }} --account-key ${{ env.storage_key }}
               fi
               
               # Add volume configuration to common config
-              VOLUME_CONFIG="--volumes ${SERVICE}-volume=Azure.StorageAccount:$STORAGE_ACCOUNT/$SHARE_NAME:$STORAGE_KEY --volume-mounts ${SERVICE}-volume=$STORAGE_MOUNT_PATH"
+              VOLUME_CONFIG="--volumes ${SERVICE}-volume=Azure.StorageAccount:${{ steps.storage-setup.outputs.storage_account }}/$SHARE_NAME:${{ env.storage_key }} --volume-mounts ${SERVICE}-volume=$STORAGE_MOUNT_PATH"
               COMMON_CONFIG="$COMMON_CONFIG $VOLUME_CONFIG"
             fi
 

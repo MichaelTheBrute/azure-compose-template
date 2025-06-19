@@ -120,7 +120,7 @@ jobs:
         run: |
           # Generate storage account name (must be globally unique, lowercase, no special chars)
           REF_NAME=$(echo "${{ github.ref_name }}" | tr '[:upper:]' '[:lower:]' | tr -d '-') # Convert to lowercase and remove hyphens
-          STORAGE_ACCOUNT="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME}-store"
+          STORAGE_ACCOUNT="${REF_NAME}-${{ steps.load-app-name.outputs.app_name }}"
           STORAGE_ACCOUNT=$(echo $STORAGE_ACCOUNT | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | head -c 24)
           
           # Create storage account if it doesn't exist

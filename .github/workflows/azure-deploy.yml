@@ -227,6 +227,8 @@ jobs:
               yq -i '.template.containers[0].volumeMounts += [{"volumeName":"'"$SERVICE"'-volume","mountPath":"'"$STORAGE_MOUNT_PATH"'"}]' tmp-$SERVICE.yaml
             fi
 
+            cat tmp-$SERVICE.yaml
+
             # Apply the updated YAML configuration to the container app
             echo "Applying updated configuration to $SERVICE"
             if ! az containerapp update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} --yaml tmp-$SERVICE.yaml; then

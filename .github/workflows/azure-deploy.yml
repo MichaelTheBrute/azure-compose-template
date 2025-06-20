@@ -116,41 +116,6 @@ jobs:
           username: ${{ steps.get-acr-creds.outputs.username }}
           password: ${{ steps.get-acr-creds.outputs.password }}
 
-      - name: Create Storage Account and File Share for Database
-        id: storage-setup
-        run: |
-          # Generate storage account name (must be globally unique, lowercase, no special chars)
-          REF_NAME=$(echo "${{ github.ref_name }}" | tr '[:upper:]' '[:lower:]' | tr -d '-') # Convert to lowercase and remove hyphens
-          STORAGE_ACCOUNT="${REF_NAME}${{ steps.load-app-name.outputs.app_name }}"
-          STORAGE_ACCOUNT=$(echo $STORAGE_ACCOUNT | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | head -c 24)
-          
-          # Create storage account if it doesn't exist
-          if ! az storage account show --name $STORAGE_ACCOUNT --resource-group ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
-            echo "Creating storage account: $STORAGE_ACCOUNT"
-            az storage account create \
-              --name $STORAGE_ACCOUNT \
-              --resource-group ${{ steps.display-info.outputs.resource_group }} \
-              --location westus \
-              --sku Standard_LRS \
-              --kind StorageV2
-          fi
-          
-          # Get storage key
-          STORAGE_KEY=$(az storage account keys list --account-name $STORAGE_ACCOUNT --query "[0].value" -o tsv)
-          echo "::add-mask::$STORAGE_KEY"
-          
-          # Create file share for database
-          SHARE_NAME="postgres-data"
-          if ! az storage share exists --name $SHARE_NAME --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY --query exists -o tsv | grep -q "true"; then
-            echo "Creating file share: $SHARE_NAME"
-            az storage share create --name $SHARE_NAME --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY
-          fi
-          
-          # Save storage info for later use
-          echo "storage_account=$STORAGE_ACCOUNT" >> $GITHUB_OUTPUT
-          echo "storage_key=$STORAGE_KEY" >> $GITHUB_ENV
-          echo "share_name=$SHARE_NAME" >> $GITHUB_OUTPUT
-    
       - name: Deploy to Azure Container Apps
         run: |
           export AZURE_ENV_NAME=${{ steps.display-info.outputs.azure_env_name }}
@@ -173,15 +138,27 @@ jobs:
             INGRESS_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.type=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
             INGRESS_TRANSPORT=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.transport=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
 
-            # Extract storage-related labels
-            STORAGE_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.storage.type=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
-            STORAGE_MOUNT_PATH=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.storage.mount-path=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
-            STORAGE_SHARE_NAME=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.storage.share-name=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
+            # Debug: Show what was extracted
+            echo "Extracted labels for $SERVICE:"
+            echo "  MIN_REPLICAS: '$MIN_REPLICAS'"
+            echo "  INGRESS_TYPE: '$INGRESS_TYPE'"
+            echo "  INGRESS_TRANSPORT: '$INGRESS_TRANSPORT'"
 
-            # Default values if labels are not set
-            MIN_REPLICAS=${MIN_REPLICAS:-0}
-            INGRESS_TYPE=${INGRESS_TYPE:-external}
-            INGRESS_TRANSPORT=${INGRESS_TRANSPORT:-http}
+            # Set defaults for empty/null values
+            if [[ -z "$MIN_REPLICAS" || "$MIN_REPLICAS" == "null" ]]; then
+              MIN_REPLICAS=0
+            fi
+            if [[ -z "$INGRESS_TYPE" || "$INGRESS_TYPE" == "null" ]]; then
+              INGRESS_TYPE="external"
+            fi
+            if [[ -z "$INGRESS_TRANSPORT" || "$INGRESS_TRANSPORT" == "null" ]]; then
+              INGRESS_TRANSPORT="http"
+            fi
+
+            echo "Final values for $SERVICE:"
+            echo "  MIN_REPLICAS: $MIN_REPLICAS"
+            echo "  INGRESS_TYPE: $INGRESS_TYPE"
+            echo "  INGRESS_TRANSPORT: $INGRESS_TRANSPORT"
 
             # Get current YAML config for the container app
             echo "Fetching current configuration for $SERVICE"
@@ -199,35 +176,6 @@ jobs:
             yq -i ".configuration.ingress.type = \"$INGRESS_TYPE\"" tmp-$SERVICE.yaml
             yq -i ".configuration.ingress.transport = \"$INGRESS_TRANSPORT\"" tmp-$SERVICE.yaml
             yq -i ".template.scale.minReplicas = $MIN_REPLICAS" tmp-$SERVICE.yaml
-
-            # Add volume config if needed
-            if [[ "$STORAGE_TYPE" == "AzureFile" && -n "$STORAGE_MOUNT_PATH" ]]; then
-              echo "Configuring Azure File storage mount for $SERVICE"
-              SHARE_NAME=${STORAGE_SHARE_NAME:-"$SERVICE-data"}
-
-              # Check if share exists, create if needed
-              if ! az storage share exists --name $SHARE_NAME --account-name ${{ steps.storage-setup.outputs.storage_account }} --account-key ${{ env.storage_key }} --query exists -o tsv | grep -q "true"; then
-                echo "Creating file share: $SHARE_NAME"
-                az storage share create --name $SHARE_NAME --account-name ${{ steps.storage-setup.outputs.storage_account }} --account-key ${{ env.storage_key }}
-              fi
-
-              # Make sure volumes array exists in the YAML
-              if ! yq -e '.template.volumes' tmp-$SERVICE.yaml &>/dev/null; then
-                yq -i '.template.volumes = []' tmp-$SERVICE.yaml
-              fi
-
-              # Make sure volumeMounts array exists for the container
-              if ! yq -e '.template.containers[0].volumeMounts' tmp-$SERVICE.yaml &>/dev/null; then
-                yq -i '.template.containers[0].volumeMounts = []' tmp-$SERVICE.yaml
-              fi
-
-              # Patch YAML to add volume and mount
-              echo "Adding storage volume configuration to YAML for $SERVICE"
-              yq -i '.template.volumes += [{"name":"'"$SERVICE"'-volume","storageType":"AzureFile","storageName":"'"$SHARE_NAME"'","storageAccountName":"'"${{ steps.storage-setup.outputs.storage_account }}"'","storageAccountKey":"'"${{ env.storage_key }}"'"}]' tmp-$SERVICE.yaml
-              yq -i '.template.containers[0].volumeMounts += [{"volumeName":"'"$SERVICE"'-volume","mountPath":"'"$STORAGE_MOUNT_PATH"'"}]' tmp-$SERVICE.yaml
-            fi
-
-            cat tmp-$SERVICE.yaml
 
             # Apply the updated YAML configuration to the container app
             echo "Applying updated configuration to $SERVICE"

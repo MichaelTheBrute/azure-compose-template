@@ -171,9 +171,9 @@ jobs:
             echo "Extracting properties section for update"
             yq '.properties' tmp-$SERVICE-full.yaml > tmp-$SERVICE.yaml
 
-            # Patch YAML with new values
+            # Patch YAML with new values - CORRECTED INGRESS CONFIGURATION
             echo "Applying label configurations to YAML for $SERVICE"
-            yq -i ".configuration.ingress.type = \"$INGRESS_TYPE\"" tmp-$SERVICE.yaml
+            yq -i ".configuration.ingress.external = ($INGRESS_TYPE == \"external\")" tmp-$SERVICE.yaml
             yq -i ".configuration.ingress.transport = \"$INGRESS_TRANSPORT\"" tmp-$SERVICE.yaml
             yq -i ".template.scale.minReplicas = $MIN_REPLICAS" tmp-$SERVICE.yaml
 

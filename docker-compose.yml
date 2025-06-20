@@ -16,16 +16,10 @@ services:
             external: false
             transport: tcp
             targetPort: 6379
-            allowInsecure: false
         template:
           scale:
             minReplicas: 1
             maxReplicas: 3
-          containers:
-            - name: redis
-              resources:
-                cpu: 0.25
-                memory: 0.5Gi
 
   frontend:
     build:
@@ -42,17 +36,10 @@ services:
           ingress:
             external: true
             transport: http
-            targetPort: 8080
-            allowInsecure: false
         template:
           scale:
             minReplicas: 1
             maxReplicas: 10
-          containers:
-            - name: frontend
-              resources:
-                cpu: 0.5
-                memory: 1Gi
 
   backend:
     build:
@@ -70,13 +57,7 @@ services:
             external: false
             transport: http
             targetPort: 5000
-            allowInsecure: false
         template:
           scale:
             minReplicas: 1
             maxReplicas: 5
-          containers:
-            - name: backend
-              resources:
-                cpu: 0.5
-                memory: 1Gi

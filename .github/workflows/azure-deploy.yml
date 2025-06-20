@@ -129,59 +129,26 @@ jobs:
             --registry-username ${{ steps.get-acr-creds.outputs.username }} \
             --registry-password "${{ steps.get-acr-creds.outputs.password }}"
 
-          # Loop through services in docker-compose.yml and configure replicas and ingress
+          # Apply Azure Container Apps configurations from extension fields
           for SERVICE in $(yq '.services | keys | .[]' docker-compose.yml); do
             echo "--- Processing service: $SERVICE ---"
             
-            # Extract custom labels using yq, fallback to defaults if not set
-            MIN_REPLICAS=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.min-replicas=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
-            INGRESS_TYPE=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.type=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
-            INGRESS_TRANSPORT=$(yq -r ".services[\"$SERVICE\"].labels[]? | select(test(\"^studiologic.io.ingress.transport=\")) | split(\"=\")[1]" docker-compose.yml | head -n1)
-
-            # Debug: Show what was extracted
-            echo "Extracted labels for $SERVICE:"
-            echo "  MIN_REPLICAS: '$MIN_REPLICAS'"
-            echo "  INGRESS_TYPE: '$INGRESS_TYPE'"
-            echo "  INGRESS_TRANSPORT: '$INGRESS_TRANSPORT'"
-
-            # Set defaults for empty/null values
-            if [[ -z "$MIN_REPLICAS" || "$MIN_REPLICAS" == "null" ]]; then
-              MIN_REPLICAS=0
-            fi
-            if [[ -z "$INGRESS_TYPE" || "$INGRESS_TYPE" == "null" ]]; then
-              INGRESS_TYPE="external"
-            fi
-            if [[ -z "$INGRESS_TRANSPORT" || "$INGRESS_TRANSPORT" == "null" ]]; then
-              INGRESS_TRANSPORT="http"
-            fi
-
-            echo "Final values for $SERVICE:"
-            echo "  MIN_REPLICAS: $MIN_REPLICAS"
-            echo "  INGRESS_TYPE: $INGRESS_TYPE"
-            echo "  INGRESS_TRANSPORT: $INGRESS_TRANSPORT"
-
-            # Get current YAML config for the container app
-            echo "Fetching current configuration for $SERVICE"
-            if ! az containerapp show --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} -o yaml > tmp-$SERVICE-full.yaml; then
-              echo "::error::Failed to get configuration for $SERVICE"
-              exit 1
-            fi
-
-            # Extract only the properties section which is what we need for updates
-            echo "Extracting properties section for update"
-            yq '.properties' tmp-$SERVICE-full.yaml > tmp-$SERVICE.yaml
-
-            # Patch YAML with new values - CORRECTED INGRESS CONFIGURATION
-            echo "Applying label configurations to YAML for $SERVICE"
-            yq -i ".configuration.ingress.external = ($INGRESS_TYPE == \"external\")" tmp-$SERVICE.yaml
-            yq -i ".configuration.ingress.transport = \"$INGRESS_TRANSPORT\"" tmp-$SERVICE.yaml
-            yq -i ".template.scale.minReplicas = $MIN_REPLICAS" tmp-$SERVICE.yaml
-
-            # Apply the updated YAML configuration to the container app
-            echo "Applying updated configuration to $SERVICE"
-            if ! az containerapp update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} --yaml tmp-$SERVICE.yaml; then
-              echo "::error::Failed to update container app $SERVICE"
-              exit 1
+            # Check if service has Azure Container App configuration
+            if yq -e ".services[\"$SERVICE\"][\"x-azure-containerapp\"]" docker-compose.yml &>/dev/null; then
+              echo "Applying custom Azure configuration for $SERVICE"
+              
+              # Extract the Azure configuration to a temporary file
+              yq ".services[\"$SERVICE\"][\"x-azure-containerapp\"]" docker-compose.yml > tmp-$SERVICE-config.yaml
+              
+              # Apply the configuration
+              if ! az containerapp update --name $SERVICE --resource-group ${{ steps.display-info.outputs.resource_group }} --yaml tmp-$SERVICE-config.yaml; then
+                echo "::error::Failed to update container app $SERVICE with custom configuration"
+                exit 1
+              fi
+              
+              echo "Successfully applied custom configuration for $SERVICE"
+            else
+              echo "No custom Azure configuration found for $SERVICE, using defaults from compose"
             fi
             
             echo "--- Finished processing service: $SERVICE ---"

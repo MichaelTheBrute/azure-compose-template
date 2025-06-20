@@ -8,10 +8,24 @@ services:
     image: "redis:latest"
     ports:
       - "6379:6379"
-    labels:
-      - "studiologic.io.min-replicas=1"
-      - "studiologic.io.ingress.type=internal"
-      - "studiologic.io.ingress.transport=tcp"
+    # Azure Container Apps ARM template configuration
+    x-azure-containerapp:
+      properties:
+        configuration:
+          ingress:
+            external: false
+            transport: tcp
+            targetPort: 6379
+            allowInsecure: false
+        template:
+          scale:
+            minReplicas: 1
+            maxReplicas: 3
+          containers:
+            - name: redis
+              resources:
+                cpu: 0.25
+                memory: 0.5Gi
 
   frontend:
     build:
@@ -22,8 +36,23 @@ services:
       - AZURE_ENV_NAME=${AZURE_ENV_NAME}
     depends_on:
       - backend
-    labels:
-      - "studiologic.io.min-replicas=1"
+    x-azure-containerapp:
+      properties:
+        configuration:
+          ingress:
+            external: true
+            transport: http
+            targetPort: 8080
+            allowInsecure: false
+        template:
+          scale:
+            minReplicas: 1
+            maxReplicas: 10
+          containers:
+            - name: frontend
+              resources:
+                cpu: 0.5
+                memory: 1Gi
 
   backend:
     build:
@@ -34,6 +63,20 @@ services:
       - AZURE_ENV_NAME=${AZURE_ENV_NAME}
     depends_on:
       - redis
-    labels:
-      - "studiologic.io.min-replicas=1"
-      - "studiologic.io.ingress.type=internal"
+    x-azure-containerapp:
+      properties:
+        configuration:
+          ingress:
+            external: false
+            transport: http
+            targetPort: 5000
+            allowInsecure: false
+        template:
+          scale:
+            minReplicas: 1
+            maxReplicas: 5
+          containers:
+            - name: backend
+              resources:
+                cpu: 0.5
+                memory: 1Gi

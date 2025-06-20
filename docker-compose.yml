@@ -8,7 +8,6 @@ services:
     image: "redis:latest"
     ports:
       - "6379:6379"
-    # Azure Container Apps ARM template configuration
     x-azure-containerapp:
       properties:
         configuration:
@@ -36,6 +35,7 @@ services:
           ingress:
             external: true
             transport: http
+            targetPort: 8080  # Add this line
         template:
           scale:
             minReplicas: 1
@@ -48,6 +48,7 @@ services:
       - "5000:5000"
     environment:
       - AZURE_ENV_NAME=${AZURE_ENV_NAME}
+      - DATABASE_URL=${DATABASE_URL}  # Add this
     depends_on:
       - redis
     x-azure-containerapp:

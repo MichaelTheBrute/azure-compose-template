@@ -100,6 +100,86 @@ jobs:
             echo "Container apps environment ${{ steps.display-info.outputs.azure_env_name }} already exists."
           fi
 
+      - name: Create Azure Database for PostgreSQL
+        id: postgres-setup
+        run: |
+          REF_NAME=$(echo "${{ github.ref_name }}" | tr '[:upper:]' '[:lower:]' | tr -d '-')
+          DB_SERVER_NAME="${{ steps.load-app-name.outputs.app_name }}-${REF_NAME}-db"
+          DB_USERNAME="dbadmin"
+          
+          # Check if database server exists
+          if ! az postgres flexible-server show --name $DB_SERVER_NAME --resource-group ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
+            echo "Creating PostgreSQL flexible server: $DB_SERVER_NAME"
+            
+            # Generate secure password
+            DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+            echo "::add-mask::$DB_PASSWORD"
+            
+            # Create the server with enhanced configuration
+            az postgres flexible-server create \
+              --name $DB_SERVER_NAME \
+              --resource-group ${{ steps.display-info.outputs.resource_group }} \
+              --location westus \
+              --admin-user $DB_USERNAME \
+              --admin-password "$DB_PASSWORD" \
+              --sku-name Standard_B1ms \
+              --tier Burstable \
+              --storage-size 32 \
+              --storage-auto-grow Enabled \
+              --version 14 \
+              --public-access 0.0.0.0 \
+              --high-availability Disabled \
+              --backup-retention 7 \
+              --geo-redundant-backup Disabled
+            
+            # Store password for this session
+            echo "db_password=$DB_PASSWORD" >> $GITHUB_ENV
+            echo "::add-mask::$DB_PASSWORD"
+            
+            echo "PostgreSQL server $DB_SERVER_NAME created successfully"
+          else
+            echo "PostgreSQL server $DB_SERVER_NAME already exists"
+            # Retrieve password from a secure location or prompt for manual configuration
+            echo "::warning::DATABASE_URL not set for existing server. Manual configuration required."
+            # Consider using Azure Key Vault:
+            # DB_PASSWORD=$(az keyvault secret show --vault-name your-keyvault --name db-password --query value -o tsv)
+          fi
+          
+          # Construct connection string (password will be available for new servers)
+          if [[ -n "$DB_PASSWORD" ]]; then
+            DB_CONNECTION_STRING="postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_SERVER_NAME}.postgres.database.azure.com:5432/postgres?sslmode=require"
+            echo "::add-mask::$DB_CONNECTION_STRING"
+            echo "DATABASE_URL=$DB_CONNECTION_STRING" >> $GITHUB_ENV
+          fi
+          
+          # Output server details for other steps
+          echo "db_server=$DB_SERVER_NAME" >> $GITHUB_OUTPUT
+          echo "db_username=$DB_USERNAME" >> $GITHUB_OUTPUT
+
+      - name: Configure Database Firewall
+        run: |
+          # Allow Container Apps to access the database
+          # Get Container Apps Environment outbound IPs
+          ENV_IPS=$(az containerapp env show --name ${{ steps.display-info.outputs.azure_env_name }} --resource-group ${{ steps.display-info.outputs.resource_group }} --query "properties.staticIp" -o tsv)
+          
+          if [[ -n "$ENV_IPS" ]]; then
+            echo "Adding Container Apps Environment IP to firewall: $ENV_IPS"
+            az postgres flexible-server firewall-rule create \
+              --name ${{ steps.postgres-setup.outputs.db_server }} \
+              --resource-group ${{ steps.display-info.outputs.resource_group }} \
+              --rule-name "ContainerAppsAccess" \
+              --start-ip-address $ENV_IPS \
+              --end-ip-address $ENV_IPS
+          fi
+
+          # Allow all Azure services (simpler for development)
+          az postgres flexible-server firewall-rule create \
+            --name ${{ steps.postgres-setup.outputs.db_server }} \
+            --resource-group ${{ steps.display-info.outputs.resource_group }} \
+            --rule-name "AllowAzureServices" \
+            --start-ip-address "0.0.0.0" \
+            --end-ip-address "0.0.0.0"
+
       - name: Get ACR credentials
         id: get-acr-creds
         run: |
@@ -119,7 +199,8 @@ jobs:
       - name: Deploy to Azure Container Apps
         run: |
           export AZURE_ENV_NAME=${{ steps.display-info.outputs.azure_env_name }}
-
+          export DATABASE_URL="${{ env.DATABASE_URL }}"  # Add this line
+          
           # Deploy using docker-compose.yml
           az containerapp compose create \
             --resource-group ${{ steps.display-info.outputs.resource_group }} \
@@ -154,46 +235,3 @@ jobs:
             echo "--- Finished processing service: $SERVICE ---"
             echo ""
           done
-
-      - name: Check if Resource Group is being deleted
-        id: check-rg-state
-        run: |
-          RESOURCE_GROUP="${{ steps.display-info.outputs.resource_group }}"
-          MAX_WAIT_MINUTES=30
-          WAIT_INTERVAL_SECONDS=300  # 5 minutes
-          TOTAL_WAIT_SECONDS=$((MAX_WAIT_MINUTES * 60))
-          ELAPSED_SECONDS=0
-          
-          echo "Checking state of resource group: $RESOURCE_GROUP"
-          
-          while [ $ELAPSED_SECONDS -lt $TOTAL_WAIT_SECONDS ]; do
-            # Check if resource group exists
-            if ! az group exists --name "$RESOURCE_GROUP" &>/dev/null; then
-              echo "Resource group does not exist. Ready to create."
-              echo "rg_ready=true" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-            
-            # Check provisioning state
-            PROVISIONING_STATE=$(az group show --name "$RESOURCE_GROUP" --query "properties.provisioningState" -o tsv)
-            echo "Current provisioning state: $PROVISIONING_STATE"
-            
-            if [ "$PROVISIONING_STATE" == "Deleting" ]; then
-              echo "Resource group is being deleted. Waiting for $WAIT_INTERVAL_SECONDS seconds before checking again..."
-              sleep $WAIT_INTERVAL_SECONDS
-              ELAPSED_SECONDS=$((ELAPSED_SECONDS + WAIT_INTERVAL_SECONDS))
-            elif [ "$PROVISIONING_STATE" == "Succeeded" ]; then
-              echo "Resource group is in Succeeded state. Ready to proceed."
-              echo "rg_ready=true" >> $GITHUB_OUTPUT
-              exit 0
-            else
-              echo "Resource group is in $PROVISIONING_STATE state. Waiting for $WAIT_INTERVAL_SECONDS seconds before checking again..."
-              sleep $WAIT_INTERVAL_SECONDS
-              ELAPSED_SECONDS=$((ELAPSED_SECONDS + WAIT_INTERVAL_SECONDS))
-            fi
-          done
-          
-          echo "::error::Timed out waiting for resource group to be ready after $MAX_WAIT_MINUTES minutes."
-          echo "rg_ready=false" >> $GITHUB_OUTPUT
-          exit 1
-

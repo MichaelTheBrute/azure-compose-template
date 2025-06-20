@@ -2,6 +2,8 @@ from flask import Flask, jsonify
 import redis
 import os
 import logging
+import psycopg2
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
@@ -69,6 +71,21 @@ except Exception as e:
     logger.error(f"Failed to connect to Redis at {redis_host}:6379: {str(e)}")
     redis_client = None
 
+def get_db_connection():
+    """Get PostgreSQL database connection"""
+    database_url = os.getenv('DATABASE_URL')
+    if not database_url:
+        logger.warning("DATABASE_URL not set")
+        return None
+    
+    try:
+        conn = psycopg2.connect(database_url)
+        logger.info("Connected to PostgreSQL database")
+        return conn
+    except Exception as e:
+        logger.error(f"Failed to connect to PostgreSQL: {str(e)}")
+        return None
+
 @app.route('/count', methods=['GET'])
 def count_requests():
     # Increment the counter in Redis
@@ -104,6 +121,30 @@ def test_redis():
             redis_client.set('test_key', 'test_value')
             test_value = redis_client.get('test_key')
             result['test_value'] = test_value
+    except Exception as e:
+        result['error'] = str(e)
+    
+    return jsonify(result)
+
+@app.route('/db-test', methods=['GET'])
+def test_database():
+    """Test endpoint to verify PostgreSQL connection"""
+    result = {
+        'database_url_set': bool(os.getenv('DATABASE_URL')),
+        'connected': False,
+        'error': None
+    }
+    
+    try:
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT version();')
+            version = cursor.fetchone()
+            result['connected'] = True
+            result['postgres_version'] = version[0] if version else 'Unknown'
+            cursor.close()
+            conn.close()
     except Exception as e:
         result['error'] = str(e)
     

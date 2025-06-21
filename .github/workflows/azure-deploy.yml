@@ -152,14 +152,24 @@ jobs:
               "$GH_API/repos/$REPO/actions/secrets/POSTGRES_ADMIN_PASSWORD"
           else
             echo "PostgreSQL server $DB_SERVER_NAME already exists"
-            # Retrieve password from GitHub Secret for existing server
-            if [[ -n "${{ secrets.POSTGRES_ADMIN_PASSWORD }}" ]]; then
-              DB_PASSWORD="${{ secrets.POSTGRES_ADMIN_PASSWORD }}"
+            # Retrieve password from branch-specific GitHub Secret for existing server
+            SECRET_NAME="POSTGRES_ADMIN_PASSWORD_${REF_NAME^^}"
+            if [[ "${REF_NAME^^}" == "MAIN" ]]; then
+              DB_PASSWORD="${{ secrets.POSTGRES_ADMIN_PASSWORD_MAIN }}"
+            elif [[ "${REF_NAME^^}" == "STAGING" ]]; then
+              DB_PASSWORD="${{ secrets.POSTGRES_ADMIN_PASSWORD_STAGING }}"
+            elif [[ "${REF_NAME^^}" == "PROD" ]]; then
+              DB_PASSWORD="${{ secrets.POSTGRES_ADMIN_PASSWORD_PROD }}"
+            else
+              echo "::error::No GitHub secret configured for branch $REF_NAME"
+              exit 1
+            fi
+            if [[ -n "$DB_PASSWORD" ]]; then
               echo "db_password=$DB_PASSWORD" >> $GITHUB_ENV
               echo "::add-mask::$DB_PASSWORD"
-              echo "Retrieved DB_PASSWORD from GitHub Secret."
+              echo "Retrieved DB_PASSWORD from $SECRET_NAME GitHub Secret."
             else
-              echo "::error::POSTGRES_ADMIN_PASSWORD secret not set. Cannot seed database."
+              echo "::error::$SECRET_NAME secret not set. Cannot seed database."
               exit 1
             fi
           fi

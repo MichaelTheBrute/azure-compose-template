@@ -180,6 +180,20 @@ jobs:
             --start-ip-address "0.0.0.0" \
             --end-ip-address "0.0.0.0"
 
+      - name: Seed PostgreSQL metadata table
+        env:
+          PGHOST: ${{ steps.postgres-setup.outputs.db_server }}.postgres.database.azure.com
+          PGUSER: ${{ steps.postgres-setup.outputs.db_username }}
+          PGPASSWORD: ${{ env.db_password }}
+          PGDATABASE: postgres
+          PGSSLMODE: require
+          APPNAME: ${{ steps.load-app-name.outputs.app_name }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "CREATE TABLE IF NOT EXISTS metadata (id SERIAL PRIMARY KEY, appname TEXT NOT NULL);"
+          psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c \"INSERT INTO metadata (appname) VALUES ('$APPNAME') ON CONFLICT DO NOTHING;\"
+
       - name: Get ACR credentials
         id: get-acr-creds
         run: |

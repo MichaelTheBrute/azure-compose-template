@@ -9,6 +9,9 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    env:
+      DB_PASSWORD: ${{ github.ref_name == 'main' && secrets.POSTGRES_ADMIN_PASSWORD_MAIN || github.ref_name == 'staging' && secrets.POSTGRES_ADMIN_PASSWORD_STAGING || github.ref_name == 'prod' && secrets.POSTGRES_ADMIN_PASSWORD_PROD }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3

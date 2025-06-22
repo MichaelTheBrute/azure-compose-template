@@ -73,6 +73,20 @@ jobs:
             echo "ACR name '$ACR_NAME' is globally available."
           fi
 
+      - name: Wait for Resource Group deletion (if in progress)
+        run: |
+          RG="${{ steps.display-info.outputs.resource_group }}"
+          while true; do
+            STATUS=$(az group show --name "$RG" --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Deleted")
+            if [[ "$STATUS" == "Deleting" ]]; then
+              echo "Resource group $RG is currently being deleted. Waiting 30 seconds..."
+              sleep 30
+            else
+              echo "Resource group $RG is not being deleted (status: $STATUS). Proceeding."
+              break
+            fi
+          done
+
       - name: Create Resource Group if not exists
         run: |
           if ! az group show --name ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
@@ -144,6 +158,7 @@ jobs:
             # Store DB_PASSWORD as a branch-specific GitHub secret using GitHub CLI
             SECRET_NAME="POSTGRES_ADMIN_PASSWORD_${REF_NAME^^}"
             echo "Storing DB_PASSWORD as $SECRET_NAME GitHub secret"
+            export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
             echo "$DB_PASSWORD" | gh secret set "$SECRET_NAME" --repo "$GITHUB_REPOSITORY" --app actions
           else
             echo "PostgreSQL server $DB_SERVER_NAME already exists"

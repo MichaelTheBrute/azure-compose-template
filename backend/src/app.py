@@ -75,9 +75,17 @@ def get_db_connection():
     """Get PostgreSQL database connection"""
     database_url = os.getenv('DATABASE_URL')
     if not database_url:
-        logger.warning("DATABASE_URL not set")
-        return None
-    
+        db_user = os.getenv('DB_USER')
+        db_pass = os.getenv('DB_PASS')
+        db_host = os.getenv('DB_HOST')
+        db_name = os.getenv('DB_NAME', 'postgres')
+        if db_user and db_pass and db_host:
+            database_url = f"postgresql://{db_user}:{db_pass}@{db_host}:5432/{db_name}"
+            logger.info("DATABASE_URL constructed from individual DB_* environment variables")
+        else:
+            logger.warning("DATABASE_URL and/or DB_* environment variables not set")
+            return None
+
     try:
         conn = psycopg2.connect(database_url)
         logger.info("Connected to PostgreSQL database")

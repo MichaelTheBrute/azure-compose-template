@@ -141,18 +141,10 @@ jobs:
             
             echo "PostgreSQL server $DB_SERVER_NAME created successfully"
 
-            # Store DB_PASSWORD as a GitHub secret for future use
-            echo "Storing DB_PASSWORD as POSTGRES_ADMIN_PASSWORD GitHub secret"
-            GH_API="https://api.github.com"
-            REPO="${GITHUB_REPOSITORY}"
-            TOKEN="${{ secrets.GITHUB_TOKEN }}"
-            PUBKEY=$(curl -s -H "Authorization: token $TOKEN" "$GH_API/repos/$REPO/actions/secrets/public-key")
-            KEY_ID=$(echo "$PUBKEY" | jq -r '.key_id')
-            KEY=$(echo "$PUBKEY" | jq -r '.key')
-            ENCRYPTED=$(python3 -c "import base64,sys;from cryptography.hazmat.primitives.asymmetric import padding;from cryptography.hazmat.primitives import serialization;from cryptography.hazmat.primitives import hashes;from cryptography.hazmat.backends import default_backend;from cryptography.hazmat.primitives.serialization import load_pem_public_key;key=load_pem_public_key(bytes('-----BEGIN PUBLIC KEY-----\n'+sys.argv[1]+'\n-----END PUBLIC KEY-----\n','utf-8'),backend=default_backend());print(base64.b64encode(key.encrypt(bytes(sys.argv[2],'utf-8'),padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()),algorithm=hashes.SHA256(),label=None))).decode())" "$KEY" "$DB_PASSWORD")
-            curl -s -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-              -d "{\"encrypted_value\":\"$ENCRYPTED\",\"key_id\":\"$KEY_ID\"}" \
-              "$GH_API/repos/$REPO/actions/secrets/POSTGRES_ADMIN_PASSWORD"
+            # Store DB_PASSWORD as a branch-specific GitHub secret using GitHub CLI
+            SECRET_NAME="POSTGRES_ADMIN_PASSWORD_${REF_NAME^^}"
+            echo "Storing DB_PASSWORD as $SECRET_NAME GitHub secret"
+            echo "$DB_PASSWORD" | gh secret set "$SECRET_NAME" --repo "$GITHUB_REPOSITORY" --app actions
           else
             echo "PostgreSQL server $DB_SERVER_NAME already exists"
             # Retrieve password from branch-specific GitHub Secret for existing server

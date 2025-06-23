@@ -95,30 +95,21 @@ jobs:
             echo "Resource group ${{ steps.display-info.outputs.resource_group }} already exists."
           fi
 
-      - name: Create Key Vault and store DB credentials
+      - name: Create Key Vault
         id: keyvault
         run: |
-          KV_NAME="${{ steps.load-app-name.outputs.app_name }}-${{ github.ref_name }}-kv"
+          KV_NAME="${{ github.ref_name }}${{ steps.load-app-name.outputs.app_name }}"
           RG="${{ steps.display-info.outputs.resource_group }}"
           DB_USER="dbadmin"
-          # Try to get DB_PASS from previous step's output
           DB_PASS="${{ steps.postgres-setup.outputs.db_password }}"
-          # Create Key Vault if not exists
-          if ! az keyvault show --name "$KV_NAME" --resource-group "$RG" &>/dev/null; then
+          # Check if Key Vault exists
+          if az keyvault show --name "$KV_NAME" --resource-group "$RG" &>/dev/null; then
+            echo "Key Vault $KV_NAME already exists in resource group $RG."
+          else
+            echo "Creating Key Vault $KV_NAME in resource group $RG..."
             az keyvault create --name "$KV_NAME" --resource-group "$RG" --location westus
           fi
-          az keyvault secret set --vault-name "$KV_NAME" --name "db-username-${{ github.ref_name }}" --value "$DB_USER"
-          az keyvault secret set --vault-name "$KV_NAME" --name "db-password-${{ github.ref_name }}" --value "$DB_PASS"
           echo "keyvault_name=$KV_NAME" >> $GITHUB_OUTPUT
-
-      - name: Fetch DB credentials from Key Vault for backend
-        id: fetch-db-creds
-        run: |
-          KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
-          DB_USER=$(az keyvault secret show --vault-name "$KV_NAME" --name "db-username" --query value -o tsv)
-          DB_PASS=$(az keyvault secret show --vault-name "$KV_NAME" --name "db-password" --query value -o tsv)
-          echo "db_user=$DB_USER" >> $GITHUB_OUTPUT
-          echo "db_pass=$DB_PASS" >> $GITHUB_OUTPUT
 
       - name: Create ACR if not exists
         run: |
@@ -173,29 +164,21 @@ jobs:
               --backup-retention 7 \
               --geo-redundant-backup Disabled
             
-            # Enable Entra authentication and set pipeline SP as admin
-            echo "Enabling Entra authentication for PostgreSQL server"
-            az postgres flexible-server ad-admin create \
-              --resource-group ${{ steps.display-info.outputs.resource_group }} \
-              --server-name $DB_SERVER_NAME \
-              --display-name "GitHubActionsSP" \
-              --object-id ${{ secrets.AZURE_CLIENT_ID }}
-
             # Store password for this session
             echo "db_password=$DB_PASSWORD" >> $GITHUB_ENV
             echo "::add-mask::$DB_PASSWORD"
+
+            # Store DB credentials in Key Vault
+            KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
+            echo "Storing DB credentials in Key Vault: $KV_NAME"
+            az keyvault secret set --vault-name "$KV_NAME" --name "db-username" --value "$DB_USERNAME"
+            az keyvault secret set --vault-name "$KV_NAME" --name "db-password-${{ github.ref_name }}" --value "$DB_PASSWORD" 
             
             echo "PostgreSQL server $DB_SERVER_NAME created successfully"
-
-            # Store DB_PASSWORD as a branch-specific GitHub secret using GitHub CLI
-            SECRET_NAME="POSTGRES_ADMIN_PASSWORD_${REF_NAME^^}"
-            echo "Storing DB_PASSWORD as $SECRET_NAME GitHub secret"
-            export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-            echo "$DB_PASSWORD" | gh secret set "$SECRET_NAME" --repo "$GITHUB_REPOSITORY" --app actions
           else
             echo "PostgreSQL server $DB_SERVER_NAME already exists"
             # Retrieve password from Key Vault for existing server
-            KV_NAME="${{ steps.load-app-name.outputs.app_name }}-${{ github.ref_name }}-kv"
+            KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
             RG="${{ steps.display-info.outputs.resource_group }}"
             DB_USER="dbadmin"
             DB_PASS=$(az keyvault secret show --vault-name "$KV_NAME" --name "db-password-${{ github.ref_name }}" --query value -o tsv)
@@ -249,11 +232,29 @@ jobs:
         env:
           PGHOST: ${{ steps.postgres-setup.outputs.db_server }}.postgres.database.azure.com
           PGUSER: ${{ steps.postgres-setup.outputs.db_username }}
-          PGPASSWORD: ${{ env.db_password }}
           PGDATABASE: postgres
           PGSSLMODE: require
           APPNAME: ${{ steps.load-app-name.outputs.app_name }}
         run: |
+          # Authenticate with PostgreSQL using the credentials from the previous step
+          if [[ -z "$PGHOST" || -z "$PGUSER" || -z "$PGDATABASE" ]]; then
+            echo "::error::PostgreSQL connection details are not set"
+            exit 1
+          fi 
+          if [[ -z "$APPNAME" ]]; then
+            echo "::error::APPNAME is not set"
+            exit 1
+          fi  
+          # Use previously output DB credentials from earlier steps
+          if [[ -z "$PGHOST" || -z "$PGUSER" || -z "$PGDATABASE" ]]; then
+            echo "::error::PostgreSQL connection details are not set"
+            exit 1
+          fi
+          if [[ -z "${{ steps.fetch-db-creds.outputs.db_user }}" || -z "${{ steps.fetch-db-creds.outputs.db_pass }}" ]]; then
+            echo "::error::Database credentials not found from previous steps"
+            exit 1
+          fi
+          export PGPASSWORD="${{ steps.fetch-db-creds.outputs.db_pass }}"
           sudo apt-get update
           sudo apt-get install -y postgresql-client
           psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "CREATE TABLE IF NOT EXISTS metadata (id SERIAL PRIMARY KEY, appname TEXT NOT NULL);"

@@ -235,6 +235,7 @@ jobs:
           PGDATABASE: postgres
           PGSSLMODE: require
           APPNAME: ${{ steps.load-app-name.outputs.app_name }}
+          DB_PASS: ${{ env.db_password }}
         run: |
           # Authenticate with PostgreSQL using the credentials from the previous step
           if [[ -z "$PGHOST" || -z "$PGUSER" || -z "$PGDATABASE" ]]; then
@@ -245,20 +246,15 @@ jobs:
             echo "::error::APPNAME is not set"
             exit 1
           fi  
-          # Use previously output DB credentials from earlier steps
-          if [[ -z "$PGHOST" || -z "$PGUSER" || -z "$PGDATABASE" ]]; then
-            echo "::error::PostgreSQL connection details are not set"
+          if [[ -z "$DB_PASS" ]]; then
+            echo "::error::Database password not set"
             exit 1
           fi
-          if [[ -z "${{ steps.fetch-db-creds.outputs.db_user }}" || -z "${{ steps.fetch-db-creds.outputs.db_pass }}" ]]; then
-            echo "::error::Database credentials not found from previous steps"
-            exit 1
-          fi
-          export PGPASSWORD="${{ steps.fetch-db-creds.outputs.db_pass }}"
+          export PGPASSWORD="$DB_PASS"
           sudo apt-get update
           sudo apt-get install -y postgresql-client
           psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "CREATE TABLE IF NOT EXISTS metadata (id SERIAL PRIMARY KEY, appname TEXT NOT NULL);"
-          psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c \"INSERT INTO metadata (appname) VALUES ('$APPNAME') ON CONFLICT DO NOTHING;\"
+          psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "INSERT INTO metadata (appname) VALUES ('$APPNAME') ON CONFLICT DO NOTHING;"
 
       - name: Get ACR credentials
         id: get-acr-creds

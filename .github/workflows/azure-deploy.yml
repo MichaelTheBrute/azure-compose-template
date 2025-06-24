@@ -200,6 +200,10 @@ jobs:
         run: |
           export AZURE_ENV_NAME=${{ steps.display-info.outputs.azure_env_name }}
           export DATABASE_URL="${{ env.DATABASE_URL }}"  # Add this line
+
+          # Verify variables are set
+          echo "AZURE_ENV_NAME: $AZURE_ENV_NAME"
+          echo "DATABASE_URL is set: $([ -n "$DATABASE_URL" ] && echo 'Yes' || echo 'No')"
           
           # Deploy using docker-compose.yml
           az containerapp compose create \

@@ -48,7 +48,11 @@ services:
       - "5000:5000"
     environment:
       - AZURE_ENV_NAME=${AZURE_ENV_NAME}
-      - DATABASE_URL=${DATABASE_URL}  # Add this
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_HOST=${DB_HOST}
+      - DB_NAME=${DB_NAME}
+      - DATABASE_URL=${DATABASE_URL}
     depends_on:
       - redis
     x-azure-containerapp:

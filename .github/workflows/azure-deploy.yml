@@ -8,7 +8,6 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -70,6 +69,20 @@ jobs:
             echo "ACR name '$ACR_NAME' is globally available."
           fi
 
+      - name: Wait for Resource Group deletion (if in progress)
+        run: |
+          RG="${{ steps.display-info.outputs.resource_group }}"
+          while true; do
+            STATUS=$(az group show --name "$RG" --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Deleted")
+            if [[ "$STATUS" == "Deleting" ]]; then
+              echo "Resource group $RG is currently being deleted. Waiting 30 seconds..."
+              sleep 30
+            else
+              echo "Resource group $RG is not being deleted (status: $STATUS). Proceeding."
+              break
+            fi
+          done
+
       - name: Create Resource Group if not exists
         run: |
           if ! az group show --name ${{ steps.display-info.outputs.resource_group }} &>/dev/null; then
@@ -78,6 +91,51 @@ jobs:
           else
             echo "Resource group ${{ steps.display-info.outputs.resource_group }} already exists."
           fi
+
+      - name: Create Key Vault
+        id: keyvault
+        run: |
+          KV_NAME="$(echo "${{ steps.load-app-name.outputs.app_name }}${{ github.ref_name }}" | tr -d '-' | cut -c1-23)"
+          RG="${{ steps.display-info.outputs.resource_group }}"
+          DB_USER="dbadmin"
+          DB_PASS="${{ steps.postgres-setup.outputs.db_password }}"
+          # Check if Key Vault exists
+          if az keyvault show --name "$KV_NAME" --resource-group "$RG" &>/dev/null; then
+            echo "Key Vault $KV_NAME already exists in resource group $RG."
+          else
+            echo "Creating Key Vault $KV_NAME in resource group $RG..."
+            az keyvault create --name "$KV_NAME" --resource-group "$RG" --location westus
+          fi
+          echo "keyvault_name=$KV_NAME" >> $GITHUB_OUTPUT
+
+      # - name: Assign Key Vault Secrets User role and wait for RBAC propagation
+      #   run: |
+      #     KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
+      #     RG="${{ steps.display-info.outputs.resource_group }}"
+      #     SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+      #     SP_APP_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
+      #     az role assignment create \
+      #       --assignee "$SP_APP_ID" \
+      #       --role "Key Vault Secrets User" \
+      #       --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.KeyVault/vaults/$KV_NAME" || \
+      #     echo "Role assignment may already exist or propagation delay; continuing."
+
+      #     echo "Waiting for Key Vault RBAC propagation for up to 5 minutes..."
+      #     for i in {1..10}; do
+      #       if az keyvault secret set --vault-name "$KV_NAME" --name "rbac-test-secret" --value "ok" &>/dev/null && \
+      #          az keyvault secret show --vault-name "$KV_NAME" --name "rbac-test-secret" &>/dev/null; then
+      #         echo "Key Vault RBAC permissions are active."
+      #         az keyvault secret delete --vault-name "$KV_NAME" --name "rbac-test-secret" --yes &>/dev/null || true
+      #         break
+      #       else
+      #         echo "RBAC not yet active, waiting 30 seconds..."
+      #         sleep 30
+      #       fi
+      #       if [[ $i -eq 10 ]]; then
+      #         echo "::error::Timed out waiting for Key Vault RBAC propagation."
+      #         exit 1
+      #       fi
+      #     done
 
       - name: Create ACR if not exists
         run: |
@@ -135,17 +193,33 @@ jobs:
             # Store password for this session
             echo "db_password=$DB_PASSWORD" >> $GITHUB_ENV
             echo "::add-mask::$DB_PASSWORD"
+
+            # Store DB credentials in Key Vault
+            KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
+            echo "Storing DB credentials in Key Vault: $KV_NAME"
+            az keyvault secret set --vault-name "$KV_NAME" --name "db-username" --value "$DB_USERNAME"
+            az keyvault secret set --vault-name "$KV_NAME" --name "db-password-${{ github.ref_name }}" --value "$DB_PASSWORD" 
             
             echo "PostgreSQL server $DB_SERVER_NAME created successfully"
           else
             echo "PostgreSQL server $DB_SERVER_NAME already exists"
-            # Retrieve password from a secure location or prompt for manual configuration
-            echo "::warning::DATABASE_URL not set for existing server. Manual configuration required."
-            # Consider using Azure Key Vault:
-            # DB_PASSWORD=$(az keyvault secret show --vault-name your-keyvault --name db-password --query value -o tsv)
+            # Retrieve password from Key Vault for existing server
+            KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
+            RG="${{ steps.display-info.outputs.resource_group }}"
+            DB_USER="dbadmin"
+            DB_PASS=$(az keyvault secret show --vault-name "$KV_NAME" --name "db-password-${{ github.ref_name }}" --query value -o tsv)
+            if [[ -n "$DB_PASS" ]]; then
+              DB_PASSWORD="$DB_PASS"
+              echo "db_password=$DB_PASSWORD" >> $GITHUB_ENV
+              echo "::add-mask::$DB_PASSWORD"
+              echo "Retrieved DB_PASSWORD from Key Vault: $KV_NAME (db-password-${{ github.ref_name }})"
+            else
+              echo "::error::DB password not found in Key Vault ($KV_NAME, db-password-${{ github.ref_name }})"
+              exit 1
+            fi
           fi
           
-          # Construct connection string (password will be available for new servers)
+          # Construct connection string (password will be available for new or existing servers)
           if [[ -n "$DB_PASSWORD" ]]; then
             DB_CONNECTION_STRING="postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_SERVER_NAME}.postgres.database.azure.com:5432/postgres?sslmode=require"
             echo "::add-mask::$DB_CONNECTION_STRING"
@@ -179,6 +253,39 @@ jobs:
             --rule-name "AllowAzureServices" \
             --start-ip-address "0.0.0.0" \
             --end-ip-address "0.0.0.0"
+
+      - name: Seed PostgreSQL metadata table
+        env:
+          PGHOST: ${{ steps.postgres-setup.outputs.db_server }}.postgres.database.azure.com
+          PGUSER: ${{ steps.postgres-setup.outputs.db_username }}
+          PGDATABASE: postgres
+          PGSSLMODE: require
+          APPNAME: ${{ steps.load-app-name.outputs.app_name }}
+        run: |
+          # Authenticate with PostgreSQL using the credentials from the previous step
+          if [[ -z "$PGHOST" || -z "$PGUSER" || -z "$PGDATABASE" ]]; then
+            echo "::error::PostgreSQL connection details are not set"
+            exit 1
+          fi 
+          if [[ -z "$APPNAME" ]]; then
+            echo "::error::APPNAME is not set"
+            exit 1
+          fi  
+          # Use previously output DB credentials from earlier steps
+          if [[ -z "$PGHOST" || -z "$PGUSER" || -z "$PGDATABASE" ]]; then
+            echo "::error::PostgreSQL connection details are not set"
+            exit 1
+          fi
+            # Use the DB password from the environment variable set earlier
+            if [[ -z "${{ steps.postgres-setup.outputs.db_username }}" || -z "${{ env.DATABASE_URL }}" ]]; then
+            echo "::error::Database credentials not found from previous steps"
+            exit 1
+            fi
+            export PGPASSWORD="${{ env.db_password }}"
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+            psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "CREATE TABLE IF NOT EXISTS metadata (id SERIAL PRIMARY KEY, appname TEXT NOT NULL UNIQUE);"
+            psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "INSERT INTO metadata (appname) VALUES ('$APPNAME') ON CONFLICT DO NOTHING;"
 
       - name: Get ACR credentials
         id: get-acr-creds

@@ -20,6 +20,70 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to select Azure subscription interactively
+select_azure_subscription() {
+    print_info "Getting available Azure subscriptions..."
+    
+    # Get all subscriptions in JSON format
+    SUBSCRIPTIONS_JSON=$(az account list --query "[].{id:id, name:name, isDefault:isDefault}" -o json 2>/dev/null)
+    
+    if [[ -z "$SUBSCRIPTIONS_JSON" || "$SUBSCRIPTIONS_JSON" == "[]" ]]; then
+        print_error "No Azure subscriptions found"
+        print_error "Please ensure you're logged in with: az login"
+        exit 1
+    fi
+    
+    # Parse subscriptions into arrays
+    mapfile -t SUB_IDS < <(echo "$SUBSCRIPTIONS_JSON" | jq -r '.[].id')
+    mapfile -t SUB_NAMES < <(echo "$SUBSCRIPTIONS_JSON" | jq -r '.[].name')
+    mapfile -t SUB_DEFAULTS < <(echo "$SUBSCRIPTIONS_JSON" | jq -r '.[].isDefault')
+    
+    # If only one subscription, use it automatically
+    if [[ ${#SUB_IDS[@]} -eq 1 ]]; then
+        SUBSCRIPTION_ID="${SUB_IDS[0]}"
+        SUBSCRIPTION_NAME="${SUB_NAMES[0]}"
+        print_info "Using only available subscription: $SUBSCRIPTION_NAME"
+        return
+    fi
+    
+    # Display subscription options
+    echo
+    print_info "Available Azure subscriptions:"
+    echo
+    
+    for i in "${!SUB_IDS[@]}"; do
+        local number=$((i + 1))
+        local default_marker=""
+        
+        if [[ "${SUB_DEFAULTS[$i]}" == "true" ]]; then
+            default_marker=" (current default)"
+        fi
+        
+        printf "%2d) %s%s\n" "$number" "${SUB_NAMES[$i]}" "$default_marker"
+        printf "     ID: %s\n" "${SUB_IDS[$i]}"
+        echo
+    done
+    
+    # Get user selection
+    while true; do
+        echo -n "Select subscription (1-${#SUB_IDS[@]}): "
+        read -r selection
+        
+        # Validate selection
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le ${#SUB_IDS[@]} ]]; then
+            local index=$((selection - 1))
+            SUBSCRIPTION_ID="${SUB_IDS[$index]}"
+            SUBSCRIPTION_NAME="${SUB_NAMES[$index]}"
+            break
+        else
+            print_error "Invalid selection. Please enter a number between 1 and ${#SUB_IDS[@]}"
+        fi
+    done
+    
+    print_success "Selected subscription: $SUBSCRIPTION_NAME"
+    print_info "Subscription ID: $SUBSCRIPTION_ID"
+}
+
 # Function to validate docker-compose.yml and app_name
 validate_docker_compose() {
     print_info "Validating docker-compose.yml configuration..."
@@ -236,22 +300,30 @@ check_prerequisites() {
     print_success "All prerequisites met"
 }
 
-# Function to get Azure subscription info
+# Function to get Azure subscription info (UPDATED)
 get_azure_info() {
     print_info "Getting Azure subscription information..."
     
     if [[ -n "$SUBSCRIPTION_ID" ]]; then
-        az account set --subscription "$SUBSCRIPTION_ID"
-        print_info "Using specified subscription: $SUBSCRIPTION_ID"
+        # Subscription provided via command line
+        if az account set --subscription "$SUBSCRIPTION_ID" 2>/dev/null; then
+            print_info "Using specified subscription: $SUBSCRIPTION_ID"
+        else
+            print_error "Invalid subscription ID: $SUBSCRIPTION_ID"
+            print_info "Available subscriptions:"
+            az account list --query "[].{Name:name, ID:id}" -o table
+            exit 1
+        fi
     else
-        SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-        print_info "Using current subscription: $SUBSCRIPTION_ID"
+        # Interactive selection
+        select_azure_subscription
+        az account set --subscription "$SUBSCRIPTION_ID"
     fi
     
     TENANT_ID=$(az account show --query tenantId -o tsv)
     SUBSCRIPTION_NAME=$(az account show --query name -o tsv)
     
-    print_info "Subscription: $SUBSCRIPTION_NAME"
+    print_info "Active subscription: $SUBSCRIPTION_NAME"
     print_info "Tenant ID: $TENANT_ID"
 }
 
@@ -347,6 +419,9 @@ assign_permissions() {
         fi
     done
 
+    # Additional role assignments for specific scenarios
+    print_info "Assigning additional specialized roles..."
+    
     # These roles might not exist in all Azure environments, so we'll handle them separately
     OPTIONAL_ROLES=(
         "Key Vault Crypto Officer"                  # For encryption key management
@@ -471,7 +546,7 @@ display_summary() {
     fi
 }
 
-# Function to show usage
+# Function to show usage (UPDATED)
 show_usage() {
     echo "Usage: $0 [subscription-id]"
     echo
@@ -479,10 +554,11 @@ show_usage() {
     echo "The docker-compose.yml file must have the app_name set in the metadata section."
     echo
     echo "Arguments:"
-    echo "  subscription-id    Optional Azure subscription ID (uses current if not specified)"
+    echo "  subscription-id    Optional Azure subscription ID"
+    echo "                     If not provided, you'll be prompted to select from available subscriptions"
     echo
     echo "Examples:"
-    echo "  $0                                    # Use current Azure subscription"
+    echo "  $0                                          # Interactive subscription selection"
     echo "  $0 12345678-1234-1234-1234-123456789abc    # Use specific subscription"
     echo
     echo "Prerequisites:"
@@ -491,6 +567,11 @@ show_usage() {
     echo "- Azure CLI installed and logged in (az login)"
     echo "- GitHub CLI installed and logged in (gh auth login)"
     echo "- Admin access to the GitHub repository"
+    echo
+    echo "Interactive Features:"
+    echo "- Subscription selection menu if multiple subscriptions available"
+    echo "- Re-initialization detection with confirmation prompts"
+    echo "- Comprehensive validation and error handling"
     echo
     echo "Re-running:"
     echo "- Safe to run multiple times"
@@ -517,8 +598,8 @@ main() {
     validate_docker_compose
     get_repo_info
     validate_repo_access
-    check_existing_setup  # Check for existing setup before proceeding
-    get_azure_info
+    check_existing_setup
+    get_azure_info  # This now includes subscription selection
     create_service_principal
     assign_permissions
     create_github_secret

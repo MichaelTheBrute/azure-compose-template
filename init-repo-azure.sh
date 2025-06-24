@@ -20,6 +20,77 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to prompt for app name and update docker-compose.yml
+prompt_and_set_app_name() {
+    print_info "App name configuration required..."
+    echo
+    print_info "The app name will be used for:"
+    echo "  • Azure resource naming (Resource Groups, Container Registry, etc.)"
+    echo "  • Database seeding and application display"
+    echo "  • Service principal naming"
+    echo
+    print_info "App name requirements:"
+    echo "  • 2-50 characters long"
+    echo "  • Start and end with alphanumeric characters"
+    echo "  • Can contain hyphens (-) in the middle"
+    echo "  • Cannot contain spaces or special characters"
+    echo "  • Will be converted to lowercase for Azure resources"
+    echo
+    print_info "Examples: my-piano-studio, webapp-demo, musicapp123"
+    echo
+    
+    while true; do
+        read -p "Enter your app name: " APP_NAME
+        
+        # Remove quotes and trim whitespace
+        APP_NAME=$(echo "$APP_NAME" | sed 's/^["'"'"']//;s/["'"'"']$//' | xargs)
+        
+        # Check if empty
+        if [[ -z "$APP_NAME" ]]; then
+            print_error "App name cannot be empty. Please try again."
+            continue
+        fi
+        
+        # Validate app name format
+        if [[ ! "$APP_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$ ]] || [[ ${#APP_NAME} -lt 2 ]] || [[ ${#APP_NAME} -gt 50 ]]; then
+            print_error "Invalid app name format: '$APP_NAME'"
+            print_error "Please ensure it meets the requirements above."
+            continue
+        fi
+        
+        # Confirm with user
+        echo
+        print_info "You entered: '$APP_NAME'"
+        read -p "Is this correct? (y/N): " -n 1 -r
+        echo
+        
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            break
+        else
+            echo "Let's try again..."
+        fi
+    done
+    
+    print_success "App name validated: '$APP_NAME'"
+    
+    # Update docker-compose.yml with the app name
+    print_info "Updating docker-compose.yml with app name..."
+    
+    # Check if metadata section exists
+    if yq eval '.metadata' docker-compose.yml >/dev/null 2>&1; then
+        # Update existing metadata section
+        yq eval ".metadata.app_name = \"$APP_NAME\"" -i docker-compose.yml
+    else
+        # Add metadata section
+        yq eval ".metadata.app_name = \"$APP_NAME\"" -i docker-compose.yml
+    fi
+    
+    print_success "✓ docker-compose.yml updated with app_name: '$APP_NAME'"
+    
+    # Store app name for use in service principal naming
+    export VALIDATED_APP_NAME="$APP_NAME"
+}
+
 # Function to select Azure subscription interactively
 select_azure_subscription() {
     print_info "Getting available Azure subscriptions..."
@@ -84,7 +155,7 @@ select_azure_subscription() {
     print_info "Subscription ID: $SUBSCRIPTION_ID"
 }
 
-# Function to validate docker-compose.yml and app_name
+# Function to validate docker-compose.yml and app_name (UPDATED)
 validate_docker_compose() {
     print_info "Validating docker-compose.yml configuration..."
     
@@ -112,46 +183,22 @@ validate_docker_compose() {
     # Remove any quotes and trim whitespace
     APP_NAME=$(echo "$APP_NAME" | sed 's/^["'"'"']//;s/["'"'"']$//' | xargs)
     
+    # Check if app_name is set and valid
     if [[ -z "$APP_NAME" || "$APP_NAME" == "null" ]]; then
-        print_error "❌ App name is not set in docker-compose.yml"
-        echo
-        print_error "Please set the app_name in the metadata section of docker-compose.yml:"
-        echo
-        echo "metadata:"
-        echo "  app_name: your-app-name-here"
-        echo
-        print_info "Example:"
-        echo "metadata:"
-        echo "  app_name: my-piano-studio"
-        echo
-        print_error "The app_name will be used for:"
-        echo "- Azure resource naming"
-        echo "- Database seeding"
-        echo "- Application display name"
-        exit 1
+        print_warning "⚠️  App name is not set in docker-compose.yml"
+        prompt_and_set_app_name
+    else
+        # Validate existing app name format
+        if [[ ! "$APP_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$ ]] || [[ ${#APP_NAME} -lt 2 ]] || [[ ${#APP_NAME} -gt 50 ]]; then
+            print_error "❌ Invalid app name format in docker-compose.yml: '$APP_NAME'"
+            echo
+            print_error "The existing app name doesn't meet requirements."
+            prompt_and_set_app_name
+        else
+            print_success "✓ App name validated: '$APP_NAME'"
+            export VALIDATED_APP_NAME="$APP_NAME"
+        fi
     fi
-    
-    # Validate app name format (Azure resource naming requirements)
-    if [[ ! "$APP_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$ ]] || [[ ${#APP_NAME} -lt 2 ]] || [[ ${#APP_NAME} -gt 50 ]]; then
-        print_error "❌ Invalid app name format: '$APP_NAME'"
-        echo
-        print_error "App name requirements:"
-        echo "- Must be 2-50 characters long"
-        echo "- Must start and end with alphanumeric characters"
-        echo "- Can contain hyphens (-) in the middle"
-        echo "- Cannot contain spaces or special characters"
-        echo
-        print_info "Valid examples:"
-        echo "- my-piano-studio"
-        echo "- piano-app"
-        echo "- musicstudio123"
-        exit 1
-    fi
-    
-    print_success "✓ App name validated: '$APP_NAME'"
-    
-    # Store app name for use in service principal naming
-    export VALIDATED_APP_NAME="$APP_NAME"
 }
 
 # Function to get repository info from git context
@@ -300,7 +347,7 @@ check_prerequisites() {
     print_success "All prerequisites met"
 }
 
-# Function to get Azure subscription info (UPDATED)
+# Function to get Azure subscription info
 get_azure_info() {
     print_info "Getting Azure subscription information..."
     
@@ -551,24 +598,26 @@ show_usage() {
     echo "Usage: $0 [subscription-id]"
     echo
     echo "This script must be run from within a GitHub repository directory."
-    echo "The docker-compose.yml file must have the app_name set in the metadata section."
+    echo "If docker-compose.yml doesn't have app_name set, you'll be prompted to enter one."
     echo
     echo "Arguments:"
     echo "  subscription-id    Optional Azure subscription ID"
     echo "                     If not provided, you'll be prompted to select from available subscriptions"
     echo
     echo "Examples:"
-    echo "  $0                                          # Interactive subscription selection"
+    echo "  $0                                          # Interactive subscription selection and app name prompting"
     echo "  $0 12345678-1234-1234-1234-123456789abc    # Use specific subscription"
     echo
     echo "Prerequisites:"
     echo "- Run from within a GitHub repository directory"
-    echo "- docker-compose.yml with metadata.app_name set"
+    echo "- docker-compose.yml file (app_name will be prompted if missing)"
     echo "- Azure CLI installed and logged in (az login)"
     echo "- GitHub CLI installed and logged in (gh auth login)"
+    echo "- yq tool installed for YAML processing"
     echo "- Admin access to the GitHub repository"
     echo
     echo "Interactive Features:"
+    echo "- App name prompting with validation if not set in docker-compose.yml"
     echo "- Subscription selection menu if multiple subscriptions available"
     echo "- Re-initialization detection with confirmation prompts"
     echo "- Comprehensive validation and error handling"
@@ -595,11 +644,11 @@ main() {
     
     # Run setup steps
     check_prerequisites
-    validate_docker_compose
+    validate_docker_compose  # This now includes app name prompting if needed
     get_repo_info
     validate_repo_access
     check_existing_setup
-    get_azure_info  # This now includes subscription selection
+    get_azure_info  # This includes subscription selection
     create_service_principal
     assign_permissions
     create_github_secret

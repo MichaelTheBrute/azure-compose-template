@@ -1,7 +1,8 @@
 version: '3.8'
 
 metadata:
-  app_name: studiologicapptemplate
+  # app_name will be set during repository initialization
+  # Run ./init-repo-azure.sh to configure your app name
 
 services:
   redis:
@@ -35,7 +36,7 @@ services:
           ingress:
             external: true
             transport: http
-            targetPort: 8080  # Add this line
+            targetPort: 8080
         template:
           scale:
             minReplicas: 1

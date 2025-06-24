@@ -8,9 +8,6 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
-    # Removed DB_PASSWORD from job-level env as it is now managed via Key Vault and step outputs.
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -111,34 +108,34 @@ jobs:
           fi
           echo "keyvault_name=$KV_NAME" >> $GITHUB_OUTPUT
 
-      - name: Assign Key Vault Secrets User role and wait for RBAC propagation
-        run: |
-          KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
-          RG="${{ steps.display-info.outputs.resource_group }}"
-          SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-          SP_APP_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
-          az role assignment create \
-            --assignee "$SP_APP_ID" \
-            --role "Key Vault Secrets User" \
-            --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.KeyVault/vaults/$KV_NAME" || \
-          echo "Role assignment may already exist or propagation delay; continuing."
+      # - name: Assign Key Vault Secrets User role and wait for RBAC propagation
+      #   run: |
+      #     KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
+      #     RG="${{ steps.display-info.outputs.resource_group }}"
+      #     SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+      #     SP_APP_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
+      #     az role assignment create \
+      #       --assignee "$SP_APP_ID" \
+      #       --role "Key Vault Secrets User" \
+      #       --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.KeyVault/vaults/$KV_NAME" || \
+      #     echo "Role assignment may already exist or propagation delay; continuing."
 
-          echo "Waiting for Key Vault RBAC propagation for up to 5 minutes..."
-          for i in {1..10}; do
-            if az keyvault secret set --vault-name "$KV_NAME" --name "rbac-test-secret" --value "ok" &>/dev/null && \
-               az keyvault secret show --vault-name "$KV_NAME" --name "rbac-test-secret" &>/dev/null; then
-              echo "Key Vault RBAC permissions are active."
-              az keyvault secret delete --vault-name "$KV_NAME" --name "rbac-test-secret" --yes &>/dev/null || true
-              break
-            else
-              echo "RBAC not yet active, waiting 30 seconds..."
-              sleep 30
-            fi
-            if [[ $i -eq 10 ]]; then
-              echo "::error::Timed out waiting for Key Vault RBAC propagation."
-              exit 1
-            fi
-          done
+      #     echo "Waiting for Key Vault RBAC propagation for up to 5 minutes..."
+      #     for i in {1..10}; do
+      #       if az keyvault secret set --vault-name "$KV_NAME" --name "rbac-test-secret" --value "ok" &>/dev/null && \
+      #          az keyvault secret show --vault-name "$KV_NAME" --name "rbac-test-secret" &>/dev/null; then
+      #         echo "Key Vault RBAC permissions are active."
+      #         az keyvault secret delete --vault-name "$KV_NAME" --name "rbac-test-secret" --yes &>/dev/null || true
+      #         break
+      #       else
+      #         echo "RBAC not yet active, waiting 30 seconds..."
+      #         sleep 30
+      #       fi
+      #       if [[ $i -eq 10 ]]; then
+      #         echo "::error::Timed out waiting for Key Vault RBAC propagation."
+      #         exit 1
+      #       fi
+      #     done
 
       - name: Create ACR if not exists
         run: |
@@ -279,15 +276,16 @@ jobs:
             echo "::error::PostgreSQL connection details are not set"
             exit 1
           fi
-          if [[ -z "${{ steps.fetch-db-creds.outputs.db_user }}" || -z "${{ steps.fetch-db-creds.outputs.db_pass }}" ]]; then
+            # Use the DB password from the environment variable set earlier
+            if [[ -z "${{ steps.postgres-setup.outputs.db_username }}" || -z "${{ env.DATABASE_URL }}" ]]; then
             echo "::error::Database credentials not found from previous steps"
             exit 1
-          fi
-          export PGPASSWORD="${{ steps.fetch-db-creds.outputs.db_pass }}"
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "CREATE TABLE IF NOT EXISTS metadata (id SERIAL PRIMARY KEY, appname TEXT NOT NULL);"
-          psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c \"INSERT INTO metadata (appname) VALUES ('$APPNAME') ON CONFLICT DO NOTHING;\"
+            fi
+            export PGPASSWORD="${{ env.db_password }}"
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+            psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "CREATE TABLE IF NOT EXISTS metadata (id SERIAL PRIMARY KEY, appname TEXT NOT NULL UNIQUE);"
+            psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "INSERT INTO metadata (appname) VALUES ('$APPNAME') ON CONFLICT DO NOTHING;"
 
       - name: Get ACR credentials
         id: get-acr-creds

@@ -110,16 +110,48 @@ def test_connection():
 # Get the backend URL based on environment
 BACKEND_URL = get_backend_url()
 
-@app.route('/')
-def index():
+def get_app_name_from_backend():
+    """Fetch app name from backend database"""
+    try:
+        response = requests.get(f'{BACKEND_URL}/app-name', timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('app_name', 'Unknown App')
+        else:
+            logger.error(f"Failed to get app name: {response.status_code}")
+            return 'Default App'
+    except Exception as e:
+        logger.error(f"Error fetching app name: {str(e)}")
+        return 'Offline App'
+
+def get_count_from_backend():
+    """Fetch count from backend - keep your existing logic"""
     try:
         response = requests.get(f'{BACKEND_URL}/count')
         response.raise_for_status()
-        count = response.json().get('count', 0)
+        return response.json().get('count', 0)
     except requests.RequestException as e:
         logger.error(f"Error connecting to backend: {e}")
-        count = 'Error fetching count'
-    return render_template('index.html', count=count)
+        return 'Error fetching count'
+
+@app.route('/')
+def index():
+    """Updated to get both count and app name"""
+    try:
+        # Get app name from backend database
+        app_name = get_app_name_from_backend()
+        
+        # Get count from backend (your existing logic)
+        count = get_count_from_backend()
+        
+        # Pass both to template
+        return render_template('index.html', count=count, app_name=app_name)
+        
+    except Exception as e:
+        logger.error(f"Error in index route: {str(e)}")
+        # Fallback
+        count = get_count_from_backend()
+        return render_template('index.html', count=count, app_name='DB ERROR')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)

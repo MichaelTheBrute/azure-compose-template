@@ -109,6 +109,29 @@ def count_requests():
         # Fallback if Redis is not connected
         return jsonify({'count': 333, 'note': 'Redis not connected'})
 
+@app.route('/app-name', methods=['GET'])
+def get_app_name():
+    """Get app name from the metadata table"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'app_name': 'Default App', 'source': 'fallback'})
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT appname FROM metadata LIMIT 1;")
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if result and result[0]:
+            return jsonify({'app_name': result[0], 'source': 'database'})
+        else:
+            return jsonify({'app_name': 'Studio Logic App', 'source': 'default'})
+            
+    except Exception as e:
+        logger.error(f"Failed to get app name: {str(e)}")
+        return jsonify({'app_name': 'Offline App', 'source': 'error', 'error': str(e)})
+
 @app.route('/redis-test', methods=['GET'])
 def test_redis():
     """Test endpoint to verify Redis connection"""

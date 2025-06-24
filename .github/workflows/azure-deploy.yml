@@ -111,19 +111,34 @@ jobs:
           fi
           echo "keyvault_name=$KV_NAME" >> $GITHUB_OUTPUT
 
-      - name: Assign Key Vault Secrets Officer role to Service Principal
+      - name: Assign Key Vault Secrets User role and wait for RBAC propagation
         run: |
           KV_NAME="${{ steps.keyvault.outputs.keyvault_name }}"
           RG="${{ steps.display-info.outputs.resource_group }}"
           SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-          # Extract the clientId (appId) from the GitHub secret
           SP_APP_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
-          # Assign the role (idempotent)
           az role assignment create \
             --assignee "$SP_APP_ID" \
-            --role "Key Vault Secrets Officer" \
+            --role "Key Vault Secrets User" \
             --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.KeyVault/vaults/$KV_NAME" || \
           echo "Role assignment may already exist or propagation delay; continuing."
+
+          echo "Waiting for Key Vault RBAC propagation for up to 5 minutes..."
+          for i in {1..10}; do
+            if az keyvault secret set --vault-name "$KV_NAME" --name "rbac-test-secret" --value "ok" &>/dev/null && \
+               az keyvault secret show --vault-name "$KV_NAME" --name "rbac-test-secret" &>/dev/null; then
+              echo "Key Vault RBAC permissions are active."
+              az keyvault secret delete --vault-name "$KV_NAME" --name "rbac-test-secret" --yes &>/dev/null || true
+              break
+            else
+              echo "RBAC not yet active, waiting 30 seconds..."
+              sleep 30
+            fi
+            if [[ $i -eq 10 ]]; then
+              echo "::error::Timed out waiting for Key Vault RBAC propagation."
+              exit 1
+            fi
+          done
 
       - name: Create ACR if not exists
         run: |

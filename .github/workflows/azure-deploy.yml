@@ -20,17 +20,59 @@ jobs:
       - name: Load App Name from docker-compose.yml
         id: load-app-name
         run: |
-          APP_NAME=$(yq '.metadata.app_name' docker-compose.yml | tr '[:upper:]' '[:lower:]') # Convert to lowercase
+          # Load app name and handle various empty/null cases
+          RAW_APP_NAME=$(yq '.metadata.app_name // ""' docker-compose.yml)
+          
+          # Clean up the value (remove quotes, trim whitespace)  
+          APP_NAME=$(echo "$RAW_APP_NAME" | sed 's/^["'"'"']//;s/["'"'"']$//' | xargs)
+          
+          # Convert to lowercase for Azure resource naming
+          APP_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          
+          echo "Raw value from docker-compose.yml: '$RAW_APP_NAME'"
+          echo "Processed app_name: '$APP_NAME'"
           echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
 
       - name: Validate App Name
         run: |
           APP_NAME="${{ steps.load-app-name.outputs.app_name }}"
-          if [[ ! "$APP_NAME" =~ ^[a-z0-9]+$ ]]; then
-            echo "Error: APP_NAME '$APP_NAME' must be lowercase and contain only alphanumeric characters."
+          
+          # Check if app_name is null, empty, or template placeholder
+          if [[ -z "$APP_NAME" || "$APP_NAME" == "null" || "$APP_NAME" == '""' || "$APP_NAME" == "''" || "$APP_NAME" == "your-app-name-here" ]]; then
+            echo "::error::❌ App name is not configured in docker-compose.yml"
+            echo "::error::"
+            echo "::error::🚫 This appears to be an unconfigured template repository."
+            echo "::error::"
+            echo "::error::📋 To configure your repository:"
+            echo "::error::   1. Run: ./init-repo-azure.sh"
+            echo "::error::   2. Follow the prompts to set your app name"  
+            echo "::error::   3. Commit and push the updated docker-compose.yml"
+            echo "::error::"
+            echo "::error::📝 Or manually add to docker-compose.yml:"
+            echo "::error::   metadata:"
+            echo "::error::     app_name: your-app-name-here"
+            echo "::error::"
+            echo "::error::📖 For more help: https://github.com/your-username/your-template#quick-start"
             exit 1
           fi
-          echo "APP_NAME '$APP_NAME' is valid."
+          
+          # Validate format (allow hyphens as per init script requirements)
+          if [[ ! "$APP_NAME" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$ ]] || [[ ${#APP_NAME} -lt 2 ]] || [[ ${#APP_NAME} -gt 50 ]]; then
+            echo "::error::❌ Invalid app name format: '$APP_NAME'"
+            echo "::error::"
+            echo "::error::App name requirements:"
+            echo "::error::• 2-50 characters long"
+            echo "::error::• Lowercase letters and numbers only"
+            echo "::error::• Can contain hyphens (-) in the middle"
+            echo "::error::• Must start and end with alphanumeric characters"
+            echo "::error::"
+            echo "::error::Examples: my-app, webapp-demo, musicstudio123"
+            echo "::error::"
+            echo "::error::🔧 Run ./init-repo-azure.sh to set a valid app name"
+            exit 1
+          fi
+          
+          echo "✅ APP_NAME '$APP_NAME' is valid and ready for deployment."
 
       - name: Log in to Azure
         uses: azure/login@v1

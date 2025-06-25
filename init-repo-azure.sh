@@ -374,6 +374,78 @@ get_azure_info() {
     print_info "Tenant ID: $TENANT_ID"
 }
 
+# Function to register required Azure resource providers
+register_azure_providers() {
+    print_info "Registering required Azure resource providers..."
+    
+    # List of required providers for Container Apps deployment
+    PROVIDERS=(
+        "Microsoft.KeyVault"
+        "Microsoft.App"
+        "Microsoft.ContainerRegistry"
+        "Microsoft.ContainerInstance"
+        "Microsoft.OperationalInsights"
+        "Microsoft.DBforPostgreSQL"
+        "Microsoft.Storage"
+        "Microsoft.Network"
+        "Microsoft.Authorization"
+        "Microsoft.Resources"
+    )
+    
+    for provider in "${PROVIDERS[@]}"; do
+        print_info "Registering provider: $provider"
+        
+        # Check if already registered
+        STATUS=$(az provider show --namespace "$provider" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
+        
+        if [[ "$STATUS" == "Registered" ]]; then
+            print_success "✓ $provider already registered"
+        else
+            print_info "Registering $provider..."
+            if az provider register --namespace "$provider" --output none; then
+                print_success "✓ $provider registration initiated"
+            else
+                print_warning "⚠ Failed to register $provider"
+            fi
+        fi
+    done
+    
+    print_info "Waiting for provider registrations to complete..."
+    
+    # Wait for all providers to be registered
+    local all_registered=false
+    local attempts=0
+    local max_attempts=30  # 5 minutes max wait
+    
+    while [[ "$all_registered" == false && $attempts -lt $max_attempts ]]; do
+        all_registered=true
+        
+        for provider in "${PROVIDERS[@]}"; do
+            STATUS=$(az provider show --namespace "$provider" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
+            
+            if [[ "$STATUS" != "Registered" ]]; then
+                all_registered=false
+                break
+            fi
+        done
+        
+        if [[ "$all_registered" == false ]]; then
+            echo -n "."
+            sleep 10
+            ((attempts++))
+        fi
+    done
+    
+    echo  # New line after dots
+    
+    if [[ "$all_registered" == true ]]; then
+        print_success "All resource providers registered successfully"
+    else
+        print_warning "Some providers may still be registering. You can continue and check later with:"
+        print_warning "az provider list --query \"[?registrationState=='Registering']\" --output table"
+    fi
+}
+
 # Function to create service principal
 create_service_principal() {
     if [[ "$REINITIALIZING" == "true" ]]; then
@@ -649,6 +721,7 @@ main() {
     validate_repo_access
     check_existing_setup
     get_azure_info  # This includes subscription selection
+    register_azure_providers
     create_service_principal
     assign_permissions
     create_github_secret

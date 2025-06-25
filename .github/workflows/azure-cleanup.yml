@@ -2,6 +2,19 @@ name: Azure Cleanup
 
 on:
   workflow_dispatch:
+    inputs:
+      cleanup_scope:
+        description: 'What to clean up'
+        required: true
+        default: 'resources-only'
+        type: choice
+        options:
+        - 'resources-only'
+        - 'complete-cleanup'
+      confirmation:
+        description: 'Type "DELETE" to confirm cleanup'
+        required: true
+        type: string
     # Restrict to specific branches
     branches:
       - main
@@ -15,6 +28,15 @@ jobs:
     if: github.ref_name == 'main' || github.ref_name == 'staging' || github.ref_name == 'prod'
 
     steps:
+      - name: Validate Confirmation
+        run: |
+          if [[ "${{ github.event.inputs.confirmation }}" != "DELETE" ]]; then
+            echo "::error::❌ Cleanup cancelled - confirmation not provided"
+            echo "::error::You must type 'DELETE' in the confirmation field to proceed"
+            exit 1
+          fi
+          echo "✅ Cleanup confirmation validated"
+
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -26,34 +48,185 @@ jobs:
       - name: Load App Name from docker-compose.yml
         id: load-app-name
         run: |
-          APP_NAME=$(yq '.metadata.app_name' docker-compose.yml | tr '[:upper:]' '[:lower:]') # Convert to lowercase
+          # Load app name and handle various empty/null cases
+          RAW_APP_NAME=$(yq '.metadata.app_name // ""' docker-compose.yml)
+          
+          # Clean up the value (remove quotes, trim whitespace)
+          APP_NAME=$(echo "$RAW_APP_NAME" | sed 's/^["'"'"']//;s/["'"'"']$//' | xargs)
+          
+          # Convert to lowercase for Azure resource naming
+          APP_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          
+          echo "Processed app_name: '$APP_NAME'"
           echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
 
       - name: Validate App Name
         run: |
           APP_NAME="${{ steps.load-app-name.outputs.app_name }}"
-          if [[ ! "$APP_NAME" =~ ^[a-z0-9]+$ ]]; then
-            echo "Error: APP_NAME '$APP_NAME' must be lowercase and contain only alphanumeric characters."
+          
+          # Check if app_name is null, empty, or template placeholder
+          if [[ -z "$APP_NAME" || "$APP_NAME" == "null" || "$APP_NAME" == '""' || "$APP_NAME" == "''" || "$APP_NAME" == "your-app-name-here" ]]; then
+            echo "::error::❌ App name is not configured in docker-compose.yml"
+            echo "::error::Cannot determine which resources to clean up"
             exit 1
           fi
-          echo "APP_NAME '$APP_NAME' is valid."
+          
+          # Validate format (allow hyphens as per init script requirements)
+          if [[ ! "$APP_NAME" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$ ]] || [[ ${#APP_NAME} -lt 2 ]] || [[ ${#APP_NAME} -gt 50 ]]; then
+            echo "::error::❌ Invalid app name format: '$APP_NAME'"
+            exit 1
+          fi
+          
+          echo "✅ APP_NAME '$APP_NAME' is valid."
 
       - name: Log in to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Generate Resource Group Name
-        id: generate-resource-group
+      - name: Generate Resource Names
+        id: generate-names
         run: |
-          # Use the current branch name directly instead of a parameter
+          # Use the current branch name directly
           BRANCH_NAME="${{ github.ref_name }}"
-          RESOURCE_GROUP="${{ steps.load-app-name.outputs.app_name }}-${BRANCH_NAME}-rg"
+          APP_NAME="${{ steps.load-app-name.outputs.app_name }}"
+          
+          # Generate resource names (matching the deploy workflow)
+          RESOURCE_GROUP="${APP_NAME}-${BRANCH_NAME}-rg"
+          SERVICE_PRINCIPAL_NAME="sp-${APP_NAME}-github-actions"
+          
           echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
-          echo "Identified resource group to delete: $RESOURCE_GROUP (from branch: $BRANCH_NAME)"
+          echo "service_principal_name=$SERVICE_PRINCIPAL_NAME" >> $GITHUB_OUTPUT
+          
+          echo "📋 Resources to clean up:"
+          echo "   • Resource Group: $RESOURCE_GROUP"
+          echo "   • Service Principal: $SERVICE_PRINCIPAL_NAME (if complete cleanup selected)"
+          echo "   • Branch: $BRANCH_NAME"
+          echo "   • Cleanup Scope: ${{ github.event.inputs.cleanup_scope }}"
+
+      - name: Check Resource Group Existence
+        id: check-rg
+        run: |
+          RESOURCE_GROUP="${{ steps.generate-names.outputs.resource_group }}"
+          
+          if az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            echo "rg_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Resource group '$RESOURCE_GROUP' exists and will be deleted"
+            
+            # List resources in the group
+            echo "📦 Resources in group:"
+            az resource list --resource-group "$RESOURCE_GROUP" --query "[].{Name:name, Type:type}" -o table || echo "   (Unable to list resources)"
+          else
+            echo "rg_exists=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  Resource group '$RESOURCE_GROUP' does not exist (already deleted or never created)"
+          fi
+
+      - name: Check Service Principal Existence
+        id: check-sp
+        run: |
+          SP_NAME="${{ steps.generate-names.outputs.service_principal_name }}"
+          
+          SP_ID=$(az ad sp list --display-name "$SP_NAME" --query "[0].appId" -o tsv 2>/dev/null || echo "")
+          
+          if [[ -n "$SP_ID" && "$SP_ID" != "null" ]]; then
+            echo "sp_exists=true" >> $GITHUB_OUTPUT
+            echo "sp_id=$SP_ID" >> $GITHUB_OUTPUT
+            echo "✅ Service principal '$SP_NAME' exists (ID: $SP_ID)"
+            
+            if [[ "${{ github.event.inputs.cleanup_scope }}" == "complete-cleanup" ]]; then
+              echo "🗑️  Service principal will be deleted"
+            else
+              echo "⚠️  Service principal will be kept (resources-only cleanup)"
+            fi
+          else
+            echo "sp_exists=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  Service principal '$SP_NAME' does not exist (already deleted or never created)"
+          fi
 
       - name: Delete Resource Group
+        if: steps.check-rg.outputs.rg_exists == 'true'
         run: |
-          RESOURCE_GROUP="${{ steps.generate-resource-group.outputs.resource_group }}"
-          echo "Deleting Resource Group: $RESOURCE_GROUP"
-          az group delete --name $RESOURCE_GROUP --yes --no-wait
+          RESOURCE_GROUP="${{ steps.generate-names.outputs.resource_group }}"
+          
+          echo "🗑️  Deleting Resource Group: $RESOURCE_GROUP"
+          echo "⏳ This operation will run in the background and may take several minutes..."
+          
+          # Delete resource group (no-wait for faster workflow completion)
+          az group delete --name "$RESOURCE_GROUP" --yes --no-wait
+          
+          echo "✅ Resource group deletion initiated"
+          echo "💡 You can monitor progress with: az group show --name $RESOURCE_GROUP"
+
+      - name: Delete Service Principal
+        if: steps.check-sp.outputs.sp_exists == 'true' && github.event.inputs.cleanup_scope == 'complete-cleanup'
+        run: |
+          SP_NAME="${{ steps.generate-names.outputs.service_principal_name }}"
+          SP_ID="${{ steps.check-sp.outputs.sp_id }}"
+          
+          echo "🗑️  Deleting Service Principal: $SP_NAME (ID: $SP_ID)"
+          
+          # Delete service principal
+          if az ad sp delete --id "$SP_ID"; then
+            echo "✅ Service principal deleted successfully"
+          else
+            echo "⚠️  Failed to delete service principal (it may already be deleted)"
+            exit 0  # Don't fail the workflow for this
+          fi
+
+      - name: Cleanup GitHub Secrets (Complete Cleanup Only)
+        if: github.event.inputs.cleanup_scope == 'complete-cleanup'
+        run: |
+          echo "🗑️  Removing GitHub repository secrets..."
+          
+          # Note: We can't actually delete secrets via GitHub CLI in actions
+          # But we can provide instructions
+          echo "⚠️  Manual action required:"
+          echo "   The following GitHub secrets should be manually removed if no longer needed:"
+          echo "   • AZURE_CREDENTIALS"
+          echo "   • Any other Azure-related secrets"
+          echo ""
+          echo "   Go to: Settings → Secrets and variables → Actions"
+
+      - name: Cleanup Summary
+        run: |
+          echo "🧹 Cleanup Summary"
+          echo "=================="
+          echo ""
+          echo "✅ Completed Actions:"
+          
+          if [[ "${{ steps.check-rg.outputs.rg_exists }}" == "true" ]]; then
+            echo "   • Resource group deletion initiated: ${{ steps.generate-names.outputs.resource_group }}"
+          else
+            echo "   • Resource group: Not found (already deleted)"
+          fi
+          
+          if [[ "${{ github.event.inputs.cleanup_scope }}" == "complete-cleanup" ]]; then
+            if [[ "${{ steps.check-sp.outputs.sp_exists }}" == "true" ]]; then
+              echo "   • Service principal deleted: ${{ steps.generate-names.outputs.service_principal_name }}"
+            else
+              echo "   • Service principal: Not found (already deleted)"
+            fi
+            echo "   • GitHub secrets: Manual removal required"
+          else
+            echo "   • Service principal: Preserved (resources-only cleanup)"
+            echo "   • GitHub secrets: Preserved"
+          fi
+          
+          echo ""
+          echo "📋 Next Steps:"
+          if [[ "${{ github.event.inputs.cleanup_scope }}" == "resources-only" ]]; then
+            echo "   • Resources cleaned up, but deployment infrastructure preserved"
+            echo "   • You can still deploy to this environment"
+            echo "   • Run 'complete-cleanup' to remove service principal and secrets"
+          else
+            echo "   • Complete cleanup performed"
+            echo "   • Run ./init-repo-azure.sh to reinitialize if needed"
+            echo "   • Manually remove GitHub secrets from repository settings"
+          fi
+          
+          echo ""
+          echo "🔍 Verification Commands:"
+          echo "   • Check resource group: az group show --name ${{ steps.generate-names.outputs.resource_group }}"
+          if [[ "${{ github.event.inputs.cleanup_scope }}" == "complete-cleanup" ]]; then
+            echo "   • Check service principal: az ad sp show --id ${{ steps.check-sp.outputs.sp_id }}"
+          fi

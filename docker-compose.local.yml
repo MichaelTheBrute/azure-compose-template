@@ -1,0 +1,70 @@
+services:
+  # PostgreSQL database for local development
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: sliostudio
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Initialize the database with a metadata table
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: "redis:latest"
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "5000:5000"
+    environment:
+      - AZURE_ENV_NAME=local
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/sliostudio
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Mount entire source code for hot reloading during development
+      - ./backend/src:/app:rw
+    command: ["python", "-u", "app.py"]
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8080:8080"
+    environment:
+      - AZURE_ENV_NAME=local
+      - BACKEND_URL=http://backend:5000
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+    depends_on:
+      - backend
+    volumes:
+      # Mount source code and templates for hot reloading during development
+      - ./frontend/src:/app:rw
+      - ./frontend/templates:/app/templates:rw
+    command: ["python", "-u", "app.py"]
+
+volumes:
+  postgres_data:

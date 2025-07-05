@@ -182,4 +182,13 @@ def test_database():
     return jsonify(result)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    # Only enable debug mode in local development, never in Azure
+    is_azure = is_running_in_azure()
+    debug_mode = not is_azure and os.getenv('FLASK_DEBUG', '0') == '1'
+    
+    if debug_mode:
+        logger.info("🔧 Debug mode enabled for local development")
+    else:
+        logger.info("🔒 Debug mode disabled for production/Azure deployment")
+    
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)

@@ -45,7 +45,9 @@ services:
         condition: service_healthy
     volumes:
       # Mount entire source code for hot reloading during development
-      - ./backend/src:/app:rw
+      - type: bind
+        source: ./backend/src
+        target: /app
     command: ["python", "-u", "app.py"]
 
   frontend:
@@ -61,9 +63,12 @@ services:
     depends_on:
       - backend
     volumes:
-      # Mount source code and templates for hot reloading during development
-      - ./frontend/src:/app:rw
-      - ./frontend/templates:/app/templates:rw
+      - type: bind
+        source: ./frontend/src
+        target: /app
+      - type: bind
+        source: ./frontend/templates
+        target: /app/templates
     command: ["python", "-u", "app.py"]
 
 volumes:

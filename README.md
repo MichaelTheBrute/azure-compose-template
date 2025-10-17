@@ -1,6 +1,6 @@
 
 # Objective
-The objective of this repository is to act as a playground for best practices when writing azure containerapp hosted multi-container applications with GitHub CI/CD. 
+The objective of this repository is to act as a template for creating azure containerapp hosted multi-container applications with GitHub CI/CD. 
 
 # Docker Compose Project
 

@@ -1,6 +1,6 @@
 
 # Objective
-The objective of this repository is to act as a playground for best practices when writing azure containerapp hosted multi-container applications with GitHub CI/CD. 
+The objective of this repository is to act as a template for creating azure containerapp hosted multi-container applications with GitHub CI/CD. 
 
 # Docker Compose Project
 
@@ -47,7 +47,3 @@ The frontend is a simple HTML page that displays a message. It fetches the reque
 ## Backend
 
 The backend is a Flask application that counts the number of requests it receives. Each time the frontend makes a request, the backend increments the count and returns the total.
-
-## Contributing
-
-Feel free to contribute to this project by submitting issues or pull requests. Your feedback and contributions are welcome!

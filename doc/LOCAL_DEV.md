@@ -1,6 +1,6 @@
 # Local Development Setup
 
-This directory contains everything you need to run sliostudio locally for development.
+Instructions for working on a local docker setup.
 
 ## Quick Start
 
